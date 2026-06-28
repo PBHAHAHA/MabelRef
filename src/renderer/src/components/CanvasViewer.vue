@@ -92,7 +92,8 @@ const showSelectedInFolder = async () => {
 const getProject = () => editor.exportProject()
 
 const loadProject = async (project) => {
-  statusText.value = 'Loading'
+  const total = project.nodes.filter((node) => node.type === 'image').length
+  statusText.value = total > 0 ? `Loading 0/${total}` : 'Loading'
   await editor.loadProject(project, ({ loaded, total }) => {
     statusText.value = `Loading ${loaded}/${total}`
   })

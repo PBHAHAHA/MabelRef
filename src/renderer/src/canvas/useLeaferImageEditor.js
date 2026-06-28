@@ -6,7 +6,7 @@
  */
 import { App, Image, PointerEvent } from 'leafer-editor'
 import { computed, ref } from 'vue'
-import { chunkItems } from './canvasBatching.mjs'
+import { chunkItems, getLoadBatchSize } from './canvasBatching.mjs'
 import { packImages } from './imagePacking.mjs'
 import { destroyTreeChildren } from './leaferTreeLifecycle.mjs'
 import { getContentBounds, getFitView } from './viewportFit.mjs'
@@ -18,7 +18,6 @@ const MIN_ZOOM = 0.001
 const MAX_ZOOM = 1000
 const ZOOM_FACTOR = 1.2
 const FIT_PADDING = 48
-const LOAD_BATCH_SIZE = 12
 
 const getId = (prefix) => `${prefix}-${crypto.randomUUID()}`
 
@@ -351,7 +350,10 @@ export function useLeaferImageEditor() {
     const imageNodes = project.nodes.filter((projectNode) => projectNode.type === 'image')
     let loadedCount = 0
 
-    for (const batch of chunkItems(imageNodes, LOAD_BATCH_SIZE)) {
+    onProgress({ loaded: 0, total: imageNodes.length })
+    await nextFrame()
+
+    for (const batch of chunkItems(imageNodes, getLoadBatchSize(imageNodes.length))) {
       if (currentLoadToken !== loadToken) return
 
       for (const projectNode of batch) {
@@ -389,7 +391,6 @@ export function useLeaferImageEditor() {
       }
 
       loadedCount += batch.length
-      files.value = [...importedFiles]
       onProgress({ loaded: loadedCount, total: imageNodes.length })
       await nextFrame()
     }
