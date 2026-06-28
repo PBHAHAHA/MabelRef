@@ -1,8 +1,24 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { encodeMabelProject, decodeMabelProject } from '../src/shared/mabelProject.mjs'
+import {
+  createEmptyMabelProject,
+  decodeMabelProject,
+  encodeMabelProject
+} from '../src/shared/mabelProject.mjs'
 
 describe('mabel project format', () => {
+  it('creates an empty canvas project', () => {
+    assert.deepEqual(createEmptyMabelProject(), {
+      version: 1,
+      canvas: {
+        zoom: 1,
+        background: 'dot-grid'
+      },
+      assets: [],
+      nodes: []
+    })
+  })
+
   it('preserves canvas nodes and embedded image assets', () => {
     const source = {
       version: 1,

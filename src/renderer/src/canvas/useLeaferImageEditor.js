@@ -1,12 +1,14 @@
 /**
- * [INPUT]: 依赖 leafer-editor 的 App/Image、浏览器 FileReader/URL 对象资源能力与 .mabel 项目结构
- * [OUTPUT]: 对外提供 Leafer 图片编辑器初始化、按自然尺寸批量图片添加、选中图片快速排版、指定位置粘贴、自动适配居中、项目导入导出、缩放和资源释放能力
+ * [INPUT]: 依赖 leafer-editor 的 App/Image、canvasBatching、leaferTreeLifecycle、浏览器 FileReader/URL 对象资源能力与 .mabel 包项目结构
+ * [OUTPUT]: 对外提供 Leafer 图片编辑器初始化、按自然尺寸批量图片添加、分批项目加载、选中图片快速排版、指定位置粘贴、自动适配居中、项目导入导出、缩放和资源释放能力
  * [POS]: renderer/canvas 的画布领域逻辑，隔离 Leafer 状态与 Vue 组件
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { App, Image, PointerEvent } from 'leafer-editor'
 import { computed, ref } from 'vue'
+import { chunkItems } from './canvasBatching.mjs'
 import { packImages } from './imagePacking.mjs'
+import { destroyTreeChildren } from './leaferTreeLifecycle.mjs'
 import { getContentBounds, getFitView } from './viewportFit.mjs'
 import { MABEL_PROJECT_FORMAT_VERSION } from '../../../shared/mabelProject.mjs'
 
@@ -16,23 +18,29 @@ const MIN_ZOOM = 0.001
 const MAX_ZOOM = 1000
 const ZOOM_FACTOR = 1.2
 const FIT_PADDING = 48
+const LOAD_BATCH_SIZE = 12
 
 const getId = (prefix) => `${prefix}-${crypto.randomUUID()}`
 
-const readFileAsBase64 = (file) =>
+const nextFrame = () =>
+  new Promise((resolve) => {
+    requestAnimationFrame(() => resolve())
+  })
+
+const readFileAsBytes = (file) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader()
 
     reader.addEventListener('load', () => {
-      const result = String(reader.result)
-      resolve(result.includes(',') ? result.split(',').at(-1) : result)
+      resolve(new Uint8Array(reader.result))
     })
     reader.addEventListener('error', () => reject(reader.error))
-    reader.readAsDataURL(file)
+    reader.readAsArrayBuffer(file)
   })
 
-const base64ToObjectUrl = (base64, mime) => {
-  const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0))
+const base64ToBytes = (base64) => Uint8Array.from(atob(base64), (char) => char.charCodeAt(0))
+
+const bytesToObjectUrl = (bytes, mime) => {
   return URL.createObjectURL(new Blob([bytes], { type: mime }))
 }
 
@@ -65,6 +73,7 @@ export function useLeaferImageEditor() {
   const zoomLabel = computed(() => `${Math.round(zoom.value * 100)}%`)
   const imageCount = computed(() => files.value.length)
   const objectUrls = []
+  let loadToken = 0
 
   const releaseObjectUrls = () => {
     objectUrls.forEach((url) => URL.revokeObjectURL(url))
@@ -72,8 +81,10 @@ export function useLeaferImageEditor() {
   }
 
   const clearCanvas = () => {
+    loadToken += 1
+
     if (app.value?.tree) {
-      app.value.tree.children?.forEach((child) => child.destroy())
+      destroyTreeChildren(app.value.tree)
     }
 
     files.value = []
@@ -101,10 +112,10 @@ export function useLeaferImageEditor() {
     }
   }
 
-  const createImageRecord = ({ assetId, data, file, node, nodeId, originalPath }) => {
+  const createImageRecord = ({ assetId, bytes, file, node, nodeId, originalPath }) => {
     const imageRecord = {
       assetId,
-      data,
+      bytes,
       mime: file.type || 'application/octet-stream',
       name: file.name,
       node,
@@ -201,10 +212,10 @@ export function useLeaferImageEditor() {
       const source = await getImageSize(file)
       const assetId = getId('asset')
       const nodeId = getId('node')
-      const data = await readFileAsBase64(file)
+      const bytes = await readFileAsBytes(file)
       const originalPath = window.api.files.getPath(file)
 
-      sources.push({ assetId, data, file, nodeId, originalPath, source })
+      sources.push({ assetId, bytes, file, nodeId, originalPath, source })
     }
 
     const layout = packImages({
@@ -228,7 +239,7 @@ export function useLeaferImageEditor() {
       })
       const imageRecord = createImageRecord({
         assetId: item.assetId,
-        data: item.data,
+        bytes: item.bytes,
         file: item.file,
         node,
         nodeId: item.nodeId,
@@ -256,7 +267,7 @@ export function useLeaferImageEditor() {
       const source = await getImageSize(file)
       const assetId = getId('asset')
       const nodeId = getId('node')
-      const data = await readFileAsBase64(file)
+      const bytes = await readFileAsBytes(file)
       const originalPath = window.api.files.getPath(file)
       const node = new Image({
         id: nodeId,
@@ -270,7 +281,7 @@ export function useLeaferImageEditor() {
       })
       const imageRecord = createImageRecord({
         assetId,
-        data,
+        bytes,
         file,
         node,
         nodeId,
@@ -309,7 +320,7 @@ export function useLeaferImageEditor() {
       id: file.assetId,
       name: file.name,
       mime: file.mime,
-      data: file.data,
+      bytes: file.bytes,
       originalPath: file.originalPath
     })),
     nodes: files.value.map((file) => ({
@@ -328,50 +339,62 @@ export function useLeaferImageEditor() {
     }))
   })
 
-  const loadProject = (project) => {
+  const loadProject = async (project, onProgress = () => {}) => {
     if (!app.value) return
 
     clearCanvas()
+    const currentLoadToken = loadToken
     setZoom(project.canvas?.zoom || 1)
 
     const assetMap = new Map(project.assets.map((asset) => [asset.id, asset]))
     const importedFiles = []
+    const imageNodes = project.nodes.filter((projectNode) => projectNode.type === 'image')
+    let loadedCount = 0
 
-    for (const projectNode of project.nodes) {
-      if (projectNode.type !== 'image') continue
+    for (const batch of chunkItems(imageNodes, LOAD_BATCH_SIZE)) {
+      if (currentLoadToken !== loadToken) return
 
-      const asset = assetMap.get(projectNode.assetId)
-      if (!asset) continue
+      for (const projectNode of batch) {
+        const asset = assetMap.get(projectNode.assetId)
+        if (!asset) continue
 
-      const url = base64ToObjectUrl(asset.data, asset.mime)
-      const node = new Image({
-        id: projectNode.id,
-        url,
-        x: projectNode.x,
-        y: projectNode.y,
-        width: projectNode.width,
-        height: projectNode.height,
-        rotation: projectNode.rotation,
-        opacity: projectNode.opacity,
-        visible: projectNode.visible,
-        locked: projectNode.locked,
-        draggable: !projectNode.locked,
-        editable: !projectNode.locked
-      })
-      const imageRecord = createImageRecord({
-        assetId: asset.id,
-        data: asset.data,
-        file: { name: asset.name, type: asset.mime },
-        node,
-        nodeId: projectNode.id,
-        originalPath: asset.originalPath || ''
-      })
+        const bytes = asset.bytes || base64ToBytes(asset.data)
+        const url = bytesToObjectUrl(bytes, asset.mime)
+        const node = new Image({
+          id: projectNode.id,
+          url,
+          x: projectNode.x,
+          y: projectNode.y,
+          width: projectNode.width,
+          height: projectNode.height,
+          rotation: projectNode.rotation,
+          opacity: projectNode.opacity,
+          visible: projectNode.visible,
+          locked: projectNode.locked,
+          draggable: !projectNode.locked,
+          editable: !projectNode.locked
+        })
+        const imageRecord = createImageRecord({
+          assetId: asset.id,
+          bytes,
+          file: { name: asset.name, type: asset.mime },
+          node,
+          nodeId: projectNode.id,
+          originalPath: asset.originalPath || ''
+        })
 
-      app.value.tree.add(node)
-      objectUrls.push(url)
-      importedFiles.push(imageRecord)
+        app.value.tree.add(node)
+        objectUrls.push(url)
+        importedFiles.push(imageRecord)
+      }
+
+      loadedCount += batch.length
+      files.value = [...importedFiles]
+      onProgress({ loaded: loadedCount, total: imageNodes.length })
+      await nextFrame()
     }
 
+    if (currentLoadToken !== loadToken) return
     files.value = importedFiles
     fitToContent()
   }

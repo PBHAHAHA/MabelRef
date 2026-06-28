@@ -1,6 +1,8 @@
 # Mabel Boxs - Electron Vue desktop shell
+
 Electron + electron-vite + Vue 3 + electron-builder
 Canvas editor: leafer-editor
+Icons: lucide-vue-next
 
 <directory>
 src/ - 应用代码 (3子目录: main, preload, renderer)
