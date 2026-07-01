@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 electron contextBridge/ipcRenderer/webUtils 与 electron-toolkit preload 安全桥
- * [OUTPUT]: 向 renderer 暴露 electron 基础能力、windowControls 窗口控制/画布专注模式 API、workspace 工作区 API、library 工作区项目库/空画布 API 与 files 文件路径/定位 API
+ * [OUTPUT]: 向 renderer 暴露 electron 基础能力、窗口控制、项目文件、资料库与文件定位 API
  * [POS]: preload 安全边界，连接主进程 IPC 与 Vue 渲染层
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -12,21 +12,33 @@ const api = {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
     close: () => ipcRenderer.invoke('window:close'),
-    setCanvasFocusMode: (enabled) => ipcRenderer.invoke('window:set-canvas-focus-mode', enabled)
+    setCanvasFocusMode: (enabled) => ipcRenderer.invoke('window:set-canvas-focus-mode', enabled),
+    togglePin: () => ipcRenderer.invoke('window:toggle-pin')
   },
-  workspace: {
-    getCurrent: () => ipcRenderer.invoke('workspace:get-current'),
-    choose: () => ipcRenderer.invoke('workspace:choose'),
-    create: () => ipcRenderer.invoke('workspace:create'),
-    scan: () => ipcRenderer.invoke('workspace:scan')
+  project: {
+    new: () => ipcRenderer.invoke('project:new'),
+    open: () => ipcRenderer.invoke('project:open'),
+    openPath: (filePath) => ipcRenderer.invoke('project:open-path', filePath),
+    save: (payload) => ipcRenderer.invoke('project:save', payload),
+    onSaveProgress: (requestId, callback) => {
+      const channel = `project:save-progress:${requestId}`
+      const listener = (_, progress) => callback(progress)
+
+      ipcRenderer.on(channel, listener)
+      return () => ipcRenderer.removeListener(channel, listener)
+    }
   },
   library: {
-    scan: () => ipcRenderer.invoke('library:scan'),
-    createCategory: (name) => ipcRenderer.invoke('library:create-category', name),
-    createCanvas: (payload) => ipcRenderer.invoke('library:create-canvas', payload),
-    renameProject: (payload) => ipcRenderer.invoke('library:rename-project', payload),
-    saveProject: (payload) => ipcRenderer.invoke('library:save-project', payload),
-    openProject: (filePath) => ipcRenderer.invoke('library:open-project', filePath)
+    get: () => ipcRenderer.invoke('library:get'),
+    addCategory: (name) => ipcRenderer.invoke('library:add-category', name),
+    renameCategory: (categoryId, name) =>
+      ipcRenderer.invoke('library:rename-category', { categoryId, name }),
+    removeCategory: (categoryId) => ipcRenderer.invoke('library:remove-category', categoryId),
+    addProjectToCategory: (categoryId, project) =>
+      ipcRenderer.invoke('library:add-project-to-category', { categoryId, ...project }),
+    removeProjectFromCategory: (categoryId, filePath) =>
+      ipcRenderer.invoke('library:remove-project-from-category', { categoryId, filePath }),
+    touchRecentProject: (project) => ipcRenderer.invoke('library:touch-recent-project', project)
   },
   files: {
     getPath: (file) => webUtils.getPathForFile(file),

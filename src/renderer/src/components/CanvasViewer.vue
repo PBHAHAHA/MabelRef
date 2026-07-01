@@ -1,16 +1,18 @@
 <script setup>
 /**
- * [INPUT]: 依赖 useLeaferImageEditor、clipboardImages、focusMode prop 与用户拖入/粘贴的本地图片 File
- * [OUTPUT]: 对外提供基于 Leafer Editor 的多图片画布查看器、专注模式画布、按鼠标位置粘贴图片、选中图片快捷排版、原始路径定位、状态更新与项目快照读写能力
+ * [INPUT]: 依赖 useLeaferImageEditor、clipboardImages、focusMode prop 与用户拖入/粘贴/浏览选择的本地图片 File
+ * [OUTPUT]: 对外提供基于 Leafer Editor 的多图片画布查看器、首次打开拖拽引导、专注模式画布、按鼠标位置粘贴图片、选中图片快捷排版、原始路径定位、状态更新与项目快照读写能力
  * [POS]: renderer/components 的核心画布容器，被 App.vue 消费
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Maximize } from 'lucide-vue-next'
 import { getCanvasShortcut } from '../canvas/canvasShortcuts.mjs'
 import { getClipboardImageFiles } from '../canvas/clipboardImages.mjs'
+import { getWheelZoomFactor } from '../canvas/viewportZoom.mjs'
 import { useLeaferImageEditor } from '../canvas/useLeaferImageEditor'
 
-const emit = defineEmits(['image-loaded', 'save-project'])
+const emit = defineEmits(['image-loaded', 'save-project', 'selected-image-change'])
 
 defineProps({
   focusMode: {
@@ -20,10 +22,15 @@ defineProps({
 })
 
 const editorHost = ref(null)
+const fileInput = ref(null)
 const isDragging = ref(false)
 const lastPointer = ref(null)
+const saveProgress = ref(null)
 const statusText = ref('')
 const editor = useLeaferImageEditor()
+let pendingWheelDelta = 0
+let pendingWheelPoint = null
+let pendingWheelFrame = 0
 
 const importFiles = async (files) => {
   const count = await editor.addFiles(files)
@@ -32,10 +39,23 @@ const importFiles = async (files) => {
   return count
 }
 
+const getImageFiles = (files) => files.filter((file) => file.type?.startsWith('image/'))
+
 const handleDrop = async (event) => {
   event.preventDefault()
   isDragging.value = false
-  const files = [...event.dataTransfer.files].filter((file) => file.type.startsWith('image/'))
+  const files = getImageFiles([...event.dataTransfer.files])
+  await importFiles(files)
+}
+
+const browseFiles = () => {
+  fileInput.value?.click()
+}
+
+const handleFileInput = async (event) => {
+  const files = getImageFiles([...event.target.files])
+
+  event.target.value = ''
   await importFiles(files)
 }
 
@@ -52,7 +72,7 @@ const handlePaste = async (event) => {
   const count = await editor.pasteFilesAt(files, lastPointer.value || fallbackPoint)
 
   if (count > 0) emit('image-loaded', count)
-  if (count > 0) statusText.value = 'Pasted'
+  if (count > 0) statusText.value = '已粘贴'
 }
 
 const handlePointerMove = (event) => {
@@ -65,10 +85,28 @@ const handleDragOver = (event) => {
 }
 
 const handleWheel = (event) => {
-  if (!event.ctrlKey && !event.metaKey) return
   event.preventDefault()
-  if (event.deltaY > 0) editor.zoomOut()
-  else editor.zoomIn()
+
+  if (!event.ctrlKey && !event.metaKey) {
+    editor.panByWheelDelta({ x: event.deltaX, y: event.deltaY })
+    return
+  }
+
+  pendingWheelDelta += event.deltaY
+  pendingWheelPoint = { x: event.clientX, y: event.clientY }
+
+  if (pendingWheelFrame) return
+
+  pendingWheelFrame = requestAnimationFrame(() => {
+    const factor = getWheelZoomFactor(pendingWheelDelta)
+    const point = pendingWheelPoint
+
+    pendingWheelDelta = 0
+    pendingWheelPoint = null
+    pendingWheelFrame = 0
+
+    if (point) editor.zoomAtFactor(factor, point)
+  })
 }
 
 const handleKeydown = (event) => {
@@ -82,7 +120,7 @@ const handleKeydown = (event) => {
   }
 
   const count = editor.layoutSelectedImages()
-  if (count > 0) statusText.value = `Arranged ${count}`
+  if (count > 0) statusText.value = `已整理 ${count} 张`
 }
 
 const showSelectedInFolder = async () => {
@@ -93,22 +131,53 @@ const getProject = () => editor.exportProject()
 
 const loadProject = async (project) => {
   const total = project.nodes.filter((node) => node.type === 'image').length
-  statusText.value = total > 0 ? `Loading 0/${total}` : 'Loading'
+  statusText.value = total > 0 ? `正在加载 0/${total}` : '正在加载'
   await editor.loadProject(project, ({ loaded, total }) => {
-    statusText.value = `Loading ${loaded}/${total}`
+    statusText.value = `正在加载 ${loaded}/${total}`
   })
-  statusText.value = 'Opened'
+  statusText.value = ''
 }
 
 const markSaved = () => {
-  statusText.value = 'Saved'
+  saveProgress.value = null
+  statusText.value = ''
+}
+
+const markSaveCanceled = () => {
+  saveProgress.value = null
+  statusText.value = ''
+}
+
+const markSaving = () => {
+  statusText.value = '正在保存'
+  saveProgress.value = 0
+}
+
+const updateSaveProgress = (progress) => {
+  if (!progress) return
+
+  const total = Math.max(1, progress.totalEntries || 1)
+  const written = Math.min(total, progress.writtenEntries || 0)
+  saveProgress.value = progress.phase === 'done' ? 100 : Math.round((written / total) * 100)
+  statusText.value = `正在保存 ${saveProgress.value}%`
 }
 
 defineExpose({
   getProject,
   loadProject,
-  markSaved
+  markSaved,
+  markSaveCanceled,
+  markSaving,
+  showSelectedInFolder,
+  updateSaveProgress
 })
+
+watch(
+  () => editor.selectedImageName.value,
+  (name) => {
+    emit('selected-image-change', name)
+  }
+)
 
 onMounted(() => {
   editor.mount(editorHost.value)
@@ -116,6 +185,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (pendingWheelFrame) cancelAnimationFrame(pendingWheelFrame)
   editor.destroy()
 })
 </script>
@@ -134,31 +204,47 @@ onBeforeUnmount(() => {
     @keydown="handleKeydown"
   >
     <div v-if="!focusMode" class="viewer-toolbar">
-      <div>
-        <p>Leafer Editor</p>
-        <strong>{{ editor.lastFileName }}</strong>
-        <button
-          v-if="editor.selectedOriginalPath"
-          type="button"
-          class="image-origin-path"
-          title="打开所在文件夹"
-          @click="showSelectedInFolder"
-        >
-          {{ editor.selectedOriginalPath }}
-        </button>
-      </div>
+      <div class="viewer-toolbar-spacer"></div>
 
       <div class="viewer-actions">
-        <span v-if="statusText" class="project-status">{{ statusText }}</span>
-        <div class="zoom-controls" aria-label="画布缩放">
-          <button type="button" title="缩小" @click="editor.zoomOut">-</button>
-          <span>{{ editor.zoomLabel }}</span>
-          <button type="button" title="放大" @click="editor.zoomIn">+</button>
-          <button type="button" title="重置缩放" @click="editor.resetZoom">Reset</button>
+        <div v-if="saveProgress !== null" class="save-progress" aria-label="保存进度">
+          <span :style="{ width: `${saveProgress}%` }"></span>
         </div>
+        <span v-if="statusText" class="project-status">{{ statusText }}</span>
       </div>
     </div>
 
     <div ref="editorHost" class="image-canvas"></div>
+    <button
+      v-if="editor.imageCount.value > 0"
+      type="button"
+      class="canvas-reset-view"
+      title="归位到全部图片"
+      aria-label="归位到全部图片"
+      @click="editor.resetView"
+    >
+      <Maximize :size="17" :stroke-width="2" />
+    </button>
+    <div v-if="!focusMode && editor.imageCount.value === 0" class="canvas-empty-import">
+      <div class="empty-import-art" aria-hidden="true">
+        <div class="empty-import-dash"></div>
+        <div class="empty-import-image">
+          <span></span>
+          <i></i>
+          <b></b>
+        </div>
+      </div>
+      <p>拖入图片文件</p>
+      <span>支持 JPG、PNG、WEBP 等常见图片格式</span>
+      <button type="button" @click="browseFiles">浏览文件</button>
+    </div>
+    <input
+      ref="fileInput"
+      class="canvas-file-input"
+      type="file"
+      accept="image/*"
+      multiple
+      @change="handleFileInput"
+    />
   </section>
 </template>

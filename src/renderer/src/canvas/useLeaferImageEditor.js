@@ -10,13 +10,18 @@ import { chunkItems, getLoadBatchSize } from './canvasBatching.mjs'
 import { packImages } from './imagePacking.mjs'
 import { destroyTreeChildren } from './leaferTreeLifecycle.mjs'
 import { getContentBounds, getFitView } from './viewportFit.mjs'
+import {
+  getAnchoredZoomView,
+  getManualWheelZoomInteractionConfig,
+  getPannedView
+} from './viewportZoom.mjs'
 import { MABEL_PROJECT_FORMAT_VERSION } from '../../../shared/mabelProject.mjs'
 
 const GAP = 10
 const ORIGIN = 10
 const MIN_ZOOM = 0.001
 const MAX_ZOOM = 1000
-const ZOOM_FACTOR = 1.2
+const ZOOM_FACTOR = 1.12
 const FIT_PADDING = 48
 
 const getId = (prefix) => `${prefix}-${crypto.randomUUID()}`
@@ -62,14 +67,23 @@ const getImageSize = (file) =>
     image.src = url
   })
 
+const getOriginalPath = (file) => {
+  if (file.mabelOriginalPath) return file.mabelOriginalPath
+
+  try {
+    return window.api.files.getPath(file)
+  } catch {
+    return ''
+  }
+}
+
 export function useLeaferImageEditor() {
   const app = ref(null)
   const files = ref([])
   const zoom = ref(1)
   const selectedImage = ref(null)
-  const lastFileName = computed(() => files.value.at(-1)?.name || 'No image selected')
+  const selectedImageName = computed(() => selectedImage.value?.name || '')
   const selectedOriginalPath = computed(() => selectedImage.value?.originalPath || '')
-  const zoomLabel = computed(() => `${Math.round(zoom.value * 100)}%`)
   const imageCount = computed(() => files.value.length)
   const objectUrls = []
   let loadToken = 0
@@ -94,6 +108,7 @@ export function useLeaferImageEditor() {
   const mount = (view) => {
     app.value = new App({
       view,
+      ...getManualWheelZoomInteractionConfig(),
       editor: {
         boxSelect: true,
         multipleSelect: true
@@ -130,7 +145,9 @@ export function useLeaferImageEditor() {
   }
 
   const applyView = ({ nextZoom, position }) => {
-    zoom.value = Math.min(Math.max(nextZoom, MIN_ZOOM), MAX_ZOOM)
+    if (typeof nextZoom === 'number') {
+      zoom.value = Math.min(Math.max(nextZoom, MIN_ZOOM), MAX_ZOOM)
+    }
 
     if (app.value?.tree) {
       app.value.tree.scale = zoom.value
@@ -143,6 +160,8 @@ export function useLeaferImageEditor() {
     if (!app.value || files.value.length === 0) return
 
     const rect = app.value.view.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) return
+
     const bounds = getContentBounds(
       files.value.map((file) => ({
         x: file.node.x || 0,
@@ -212,7 +231,7 @@ export function useLeaferImageEditor() {
       const assetId = getId('asset')
       const nodeId = getId('node')
       const bytes = await readFileAsBytes(file)
-      const originalPath = window.api.files.getPath(file)
+      const originalPath = getOriginalPath(file)
 
       sources.push({ assetId, bytes, file, nodeId, originalPath, source })
     }
@@ -267,7 +286,7 @@ export function useLeaferImageEditor() {
       const assetId = getId('asset')
       const nodeId = getId('node')
       const bytes = await readFileAsBytes(file)
-      const originalPath = window.api.files.getPath(file)
+      const originalPath = getOriginalPath(file)
       const node = new Image({
         id: nodeId,
         url: source.url,
@@ -305,9 +324,49 @@ export function useLeaferImageEditor() {
     }
   }
 
+  const setZoomAt = (nextZoom, clientPoint) => {
+    if (!app.value?.tree) {
+      setZoom(nextZoom)
+      return
+    }
+
+    const rect = app.value.view.getBoundingClientRect()
+    const clampedZoom = Math.min(Math.max(nextZoom, MIN_ZOOM), MAX_ZOOM)
+    const view = getAnchoredZoomView({
+      anchor: {
+        x: clientPoint.x - rect.left,
+        y: clientPoint.y - rect.top
+      },
+      currentPosition: {
+        x: app.value.tree.x || 0,
+        y: app.value.tree.y || 0
+      },
+      currentZoom: zoom.value,
+      nextZoom: clampedZoom
+    })
+
+    applyView(view)
+  }
+
+  const panByWheelDelta = (delta) => {
+    if (!app.value?.tree) return
+
+    const view = getPannedView({
+      currentPosition: {
+        x: app.value.tree.x || 0,
+        y: app.value.tree.y || 0
+      },
+      delta
+    })
+
+    applyView({ nextZoom: zoom.value, position: view.position })
+  }
+
   const zoomIn = () => setZoom(zoom.value * ZOOM_FACTOR)
   const zoomOut = () => setZoom(zoom.value / ZOOM_FACTOR)
-  const resetZoom = () => setZoom(1)
+  const zoomAtFactor = (factor, clientPoint) => setZoomAt(zoom.value * factor, clientPoint)
+  const zoomInAt = (clientPoint) => setZoomAt(zoom.value * ZOOM_FACTOR, clientPoint)
+  const zoomOutAt = (clientPoint) => setZoomAt(zoom.value / ZOOM_FACTOR, clientPoint)
 
   const exportProject = () => ({
     version: MABEL_PROJECT_FORMAT_VERSION,
@@ -411,16 +470,19 @@ export function useLeaferImageEditor() {
     destroy,
     exportProject,
     imageCount,
-    lastFileName,
     layoutSelectedImages,
     loadProject,
     mount,
+    panByWheelDelta,
     pasteFilesAt,
-    resetZoom,
+    resetView: fitToContent,
+    selectedImageName,
     selectedOriginalPath,
     showSelectedInFolder: () => window.api.files.showInFolder(selectedOriginalPath.value),
+    zoomAtFactor,
     zoomIn,
-    zoomLabel,
-    zoomOut
+    zoomInAt,
+    zoomOut,
+    zoomOutAt
   }
 }

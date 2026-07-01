@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { applyCanvasFocusMode } from '../src/main/windowFocusMode.mjs'
+import { applyCanvasFocusMode, applyWindowPinMode } from '../src/main/windowFocusMode.mjs'
 
 describe('canvas focus window mode', () => {
   it('raises the window above other apps when enabled', () => {
@@ -39,5 +39,33 @@ describe('canvas focus window mode', () => {
       ['alwaysOnTop', false, 'normal'],
       ['visibleOnAllWorkspaces', false]
     ])
+  })
+})
+
+describe('window pin mode', () => {
+  it('keeps the window above normal windows when enabled', () => {
+    const calls = []
+    const window = {
+      setAlwaysOnTop(enabled, level) {
+        calls.push(['alwaysOnTop', enabled, level])
+      }
+    }
+
+    applyWindowPinMode(window, true)
+
+    assert.deepEqual(calls, [['alwaysOnTop', true, 'floating']])
+  })
+
+  it('restores the normal window level when disabled', () => {
+    const calls = []
+    const window = {
+      setAlwaysOnTop(enabled, level) {
+        calls.push(['alwaysOnTop', enabled, level])
+      }
+    }
+
+    applyWindowPinMode(window, false)
+
+    assert.deepEqual(calls, [['alwaysOnTop', false, 'normal']])
   })
 })

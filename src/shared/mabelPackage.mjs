@@ -5,6 +5,7 @@
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { Buffer } from 'node:buffer'
+import { open, rename, rm } from 'node:fs/promises'
 import { validateMabelProject } from './mabelProject.mjs'
 
 const ZIP_LOCAL_FILE_HEADER = 0x04034b50
@@ -54,6 +55,34 @@ const getAssetBytes = (asset) => {
 const sanitizeAssetName = (name) => String(name || 'asset.bin').replace(/[\\/:"*?<>|]+/g, '_')
 
 const getAssetPath = (asset) => `assets/${asset.id}-${sanitizeAssetName(asset.name)}`
+
+const getPackageEntries = (project) => {
+  validateMabelProject(project)
+
+  const assetEntries = project.assets.map((asset) => ({
+    asset,
+    path: getAssetPath(asset),
+    bytes: getAssetBytes(asset)
+  }))
+  const manifest = {
+    ...project,
+    assets: assetEntries.map(({ asset, path }) => ({
+      id: asset.id,
+      name: asset.name,
+      mime: asset.mime,
+      originalPath: asset.originalPath || '',
+      assetPath: path
+    }))
+  }
+
+  return [
+    {
+      name: MANIFEST_PATH,
+      data: Buffer.from(JSON.stringify(manifest, null, 2), 'utf8')
+    },
+    ...assetEntries.map(({ path, bytes }) => ({ name: path, data: bytes }))
+  ]
+}
 
 const createZipEntry = (name, data, offset) => {
   const nameBuffer = Buffer.from(name)
@@ -143,33 +172,8 @@ export function hasMabelPackageHeader(content) {
 }
 
 export function encodeMabelPackage(project) {
-  validateMabelProject(project)
-
-  const assetEntries = project.assets.map((asset) => ({
-    asset,
-    path: getAssetPath(asset),
-    bytes: getAssetBytes(asset)
-  }))
-  const manifest = {
-    ...project,
-    assets: assetEntries.map(({ asset, path }) => ({
-      id: asset.id,
-      name: asset.name,
-      mime: asset.mime,
-      originalPath: asset.originalPath || '',
-      assetPath: path
-    }))
-  }
-  const sourceEntries = [
-    {
-      name: MANIFEST_PATH,
-      data: Buffer.from(JSON.stringify(manifest, null, 2), 'utf8')
-    },
-    ...assetEntries.map(({ path, bytes }) => ({ name: path, data: bytes }))
-  ]
-
   let offset = 0
-  const entries = sourceEntries.map((entry) => {
+  const entries = getPackageEntries(project).map((entry) => {
     const zipEntry = createZipEntry(entry.name, entry.data, offset)
     offset += zipEntry.size
     return zipEntry
@@ -188,6 +192,58 @@ export function encodeMabelPackage(project) {
   end.writeUInt16LE(0, 20)
 
   return Buffer.concat([...localFiles, centralDirectory, end])
+}
+
+export async function writeMabelPackage(filePath, project, onProgress = () => {}) {
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`
+  let handle
+
+  try {
+    handle = await open(tempPath, 'w')
+    let offset = 0
+    const centralEntries = []
+    const entries = getPackageEntries(project)
+    const totalEntries = entries.length
+    let writtenEntries = 0
+
+    for (const entry of entries) {
+      const zipEntry = createZipEntry(entry.name, entry.data, offset)
+      offset += zipEntry.size
+      centralEntries.push(zipEntry.central)
+      await handle.write(zipEntry.local)
+      writtenEntries += 1
+      onProgress({
+        phase: entry.name === MANIFEST_PATH ? 'manifest' : 'asset',
+        entryName: entry.name,
+        writtenEntries,
+        totalEntries
+      })
+    }
+
+    const centralDirectory = Buffer.concat(centralEntries)
+    const end = Buffer.alloc(22)
+
+    end.writeUInt32LE(ZIP_END_OF_CENTRAL_DIRECTORY, 0)
+    end.writeUInt16LE(0, 4)
+    end.writeUInt16LE(0, 6)
+    end.writeUInt16LE(centralEntries.length, 8)
+    end.writeUInt16LE(centralEntries.length, 10)
+    end.writeUInt32LE(centralDirectory.length, 12)
+    end.writeUInt32LE(offset, 16)
+    end.writeUInt16LE(0, 20)
+
+    onProgress({ phase: 'finalizing', writtenEntries, totalEntries })
+    await handle.write(centralDirectory)
+    await handle.write(end)
+    await handle.close()
+    handle = null
+    await rename(tempPath, filePath)
+    onProgress({ phase: 'done', writtenEntries, totalEntries })
+  } catch (error) {
+    if (handle) await handle.close()
+    await rm(tempPath, { force: true })
+    throw error
+  }
 }
 
 export function decodeMabelPackage(content) {
