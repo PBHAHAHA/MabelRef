@@ -101,6 +101,7 @@ export function useLeaferImageEditor() {
   const selectedImageName = computed(() => selectedImage.value?.name || '')
   const selectedOriginalPath = computed(() => selectedImage.value?.originalPath || '')
   const imageCount = computed(() => files.value.length)
+  const isGrayscaleEnabled = ref(false)
   const objectUrls = []
   const history = createCanvasHistory()
   const transformHistory = createTransformHistoryRecorder(() => rememberCanvasState())
@@ -121,6 +122,7 @@ export function useLeaferImageEditor() {
 
     files.value = []
     selectedImage.value = null
+    isGrayscaleEnabled.value = false
     releaseObjectUrls()
   }
 
@@ -187,6 +189,7 @@ export function useLeaferImageEditor() {
       rotation: file.node.rotation || 0,
       skewX: file.node.skewX || 0,
       skewY: file.node.skewY || 0,
+      grayscale: file.node.grayscale || 0,
       opacity: file.node.opacity ?? 1,
       visible: file.node.visible ?? true,
       locked: file.node.locked ?? false
@@ -315,6 +318,7 @@ export function useLeaferImageEditor() {
         y: position.y + startY,
         width: position.width,
         height: position.height,
+        grayscale: isGrayscaleEnabled.value ? 1 : 0,
         draggable: true,
         editable: true
       })
@@ -357,6 +361,7 @@ export function useLeaferImageEditor() {
         y: nextY,
         width: source.width,
         height: source.height,
+        grayscale: isGrayscaleEnabled.value ? 1 : 0,
         draggable: true,
         editable: true
       })
@@ -480,6 +485,7 @@ export function useLeaferImageEditor() {
           rotation: projectNode.rotation,
           skewX: projectNode.skewX || 0,
           skewY: projectNode.skewY || 0,
+          grayscale: projectNode.grayscale || 0,
           opacity: projectNode.opacity,
           visible: projectNode.visible,
           locked: projectNode.locked,
@@ -507,6 +513,8 @@ export function useLeaferImageEditor() {
 
     if (currentLoadToken !== loadToken) return
     files.value = importedFiles
+    isGrayscaleEnabled.value =
+      importedFiles.length > 0 && importedFiles.every((file) => Boolean(file.node.grayscale))
     if (fitView) {
       fitToContent()
     } else {
@@ -527,6 +535,16 @@ export function useLeaferImageEditor() {
     return true
   }
 
+  const toggleAllImagesGrayscale = () => {
+    if (files.value.length === 0) return false
+
+    isGrayscaleEnabled.value = !isGrayscaleEnabled.value
+    files.value.forEach((file) => {
+      file.node.grayscale = isGrayscaleEnabled.value ? 1 : 0
+    })
+    return isGrayscaleEnabled.value
+  }
+
   const destroy = () => {
     clearCanvas()
     app.value?.destroy()
@@ -538,6 +556,7 @@ export function useLeaferImageEditor() {
     destroy,
     exportProject,
     imageCount,
+    isGrayscaleEnabled,
     layoutSelectedImages,
     loadProject,
     mount,
@@ -547,6 +566,7 @@ export function useLeaferImageEditor() {
     selectedImageName,
     selectedOriginalPath,
     showSelectedInFolder: () => window.api.files.showInFolder(selectedOriginalPath.value),
+    toggleAllImagesGrayscale,
     undo,
     zoomAtFactor,
     zoomIn,

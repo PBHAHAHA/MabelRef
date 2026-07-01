@@ -22,7 +22,8 @@ import {
   Folder,
   Lightbulb,
   Briefcase,
-  GraduationCap
+  GraduationCap,
+  Contrast
 } from 'lucide-vue-next'
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { createEmptyMabelProject } from '../../shared/mabelProject.mjs'
@@ -38,6 +39,7 @@ const projectName = ref('未命名')
 const selectedImageName = ref('')
 const isCanvasFocusMode = ref(false)
 const isWindowPinned = ref(false)
+const isCanvasGrayscale = ref(false)
 const isTopBarVisible = ref(false)
 const isTopBarDragging = ref(false)
 const isLibraryOpen = ref(false)
@@ -168,6 +170,11 @@ const loadProjectIntoCanvas = async ({ filePath = '', name = '未命名', projec
   activeProjectPath.value = filePath
   projectName.value = name
   selectedImageName.value = ''
+  isCanvasGrayscale.value =
+    project.nodes.length > 0 &&
+    project.nodes
+      .filter((node) => node.type === 'image')
+      .every((node) => Boolean(node.grayscale))
   imageCount.value = 0
   canvasSessionId.value += 1
   await nextTick()
@@ -251,6 +258,10 @@ const saveProject = async () => {
   projectName.value = result.name || projectName.value
   canvasViewer.value.markSaved()
   await refreshLibrary()
+}
+
+const toggleCanvasGrayscale = () => {
+  isCanvasGrayscale.value = canvasViewer.value?.toggleAllImagesGrayscale() || false
 }
 
 const startCreateCategory = async () => {
@@ -433,6 +444,18 @@ onBeforeUnmount(() => {
         </button>
         <button type="button" aria-label="保存项目" title="保存项目" @click="saveProject">
           <Save class="window-control-icon" />
+        </button>
+        <button
+          type="button"
+          :aria-label="isCanvasGrayscale ? '恢复彩色' : '转为黑白灰'"
+          :disabled="imageCount === 0"
+          :title="isCanvasGrayscale ? '恢复彩色' : '转为黑白灰'"
+          @click="toggleCanvasGrayscale"
+        >
+          <Contrast
+            class="window-control-icon"
+            :class="{ active: isCanvasGrayscale }"
+          />
         </button>
         <button
           type="button"

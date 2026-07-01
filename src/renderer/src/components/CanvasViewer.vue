@@ -177,11 +177,13 @@ const updateSaveProgress = (progress) => {
 
 defineExpose({
   getProject,
+  isGrayscaleEnabled: editor.isGrayscaleEnabled,
   loadProject,
   markSaved,
   markSaveCanceled,
   markSaving,
   showSelectedInFolder,
+  toggleAllImagesGrayscale: editor.toggleAllImagesGrayscale,
   updateSaveProgress
 })
 
@@ -227,7 +229,11 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div ref="editorHost" class="image-canvas"></div>
+    <div
+      ref="editorHost"
+      class="image-canvas"
+      :class="{ grayscale: editor.isGrayscaleEnabled.value }"
+    ></div>
     <button
       v-if="editor.imageCount.value > 0"
       type="button"

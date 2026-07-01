@@ -50,6 +50,7 @@ describe('mabel project format', () => {
           rotation: 15,
           skewX: 4,
           skewY: -2,
+          grayscale: 1,
           opacity: 0.8,
           visible: true,
           locked: false
