@@ -7,7 +7,10 @@
 import { App, Image, PointerEvent } from 'leafer-editor'
 import { computed, ref } from 'vue'
 import { chunkItems, getLoadBatchSize } from './canvasBatching.mjs'
+import { createCanvasHistory } from './canvasHistory.mjs'
+import { createTransformHistoryRecorder } from './canvasTransformHistory.mjs'
 import { packImages } from './imagePacking.mjs'
+import { syncEditorSelectionOverlay } from './leaferEditorSelection.mjs'
 import { destroyTreeChildren } from './leaferTreeLifecycle.mjs'
 import { getContentBounds, getFitView } from './viewportFit.mjs'
 import {
@@ -23,6 +26,19 @@ const MIN_ZOOM = 0.001
 const MAX_ZOOM = 1000
 const ZOOM_FACTOR = 1.12
 const FIT_PADDING = 48
+const TRANSFORM_HISTORY_EVENTS = [
+  'editor.before_scale',
+  'editor.before_rotate',
+  'editor.before_skew'
+]
+const TRANSFORM_HISTORY_RESET_EVENTS = [
+  'drag.end',
+  'move.end',
+  'zoom.end',
+  'rotate.end',
+  'pointer.up',
+  'pointer.cancel'
+]
 
 const getId = (prefix) => `${prefix}-${crypto.randomUUID()}`
 
@@ -86,7 +102,10 @@ export function useLeaferImageEditor() {
   const selectedOriginalPath = computed(() => selectedImage.value?.originalPath || '')
   const imageCount = computed(() => files.value.length)
   const objectUrls = []
+  const history = createCanvasHistory()
+  const transformHistory = createTransformHistoryRecorder(() => rememberCanvasState())
   let loadToken = 0
+  let restoringHistory = false
 
   const releaseObjectUrls = () => {
     objectUrls.forEach((url) => URL.revokeObjectURL(url))
@@ -105,45 +124,6 @@ export function useLeaferImageEditor() {
     releaseObjectUrls()
   }
 
-  const mount = (view) => {
-    app.value = new App({
-      view,
-      ...getManualWheelZoomInteractionConfig(),
-      editor: {
-        boxSelect: true,
-        multipleSelect: true
-      }
-    })
-  }
-
-  const toCanvasPoint = (clientPoint) => {
-    const rect = app.value.view.getBoundingClientRect()
-    const tree = app.value.tree
-
-    return {
-      x: (clientPoint.x - rect.left - (tree.x || 0)) / zoom.value,
-      y: (clientPoint.y - rect.top - (tree.y || 0)) / zoom.value
-    }
-  }
-
-  const createImageRecord = ({ assetId, bytes, file, node, nodeId, originalPath }) => {
-    const imageRecord = {
-      assetId,
-      bytes,
-      mime: file.type || 'application/octet-stream',
-      name: file.name,
-      node,
-      nodeId,
-      originalPath
-    }
-
-    node.on(PointerEvent.TAP, () => {
-      selectedImage.value = imageRecord
-    })
-
-    return imageRecord
-  }
-
   const applyView = ({ nextZoom, position }) => {
     if (typeof nextZoom === 'number') {
       zoom.value = Math.min(Math.max(nextZoom, MIN_ZOOM), MAX_ZOOM)
@@ -153,6 +133,7 @@ export function useLeaferImageEditor() {
       app.value.tree.scale = zoom.value
       app.value.tree.x = position.x
       app.value.tree.y = position.y
+      syncEditorSelectionOverlay(app.value.editor)
     }
   }
 
@@ -177,6 +158,88 @@ export function useLeaferImageEditor() {
     })
 
     applyView({ nextZoom: view.zoom, position: view.position })
+  }
+
+  const exportProject = () => ({
+    version: MABEL_PROJECT_FORMAT_VERSION,
+    canvas: {
+      zoom: zoom.value,
+      background: 'dot-grid'
+    },
+    assets: files.value.map((file) => ({
+      id: file.assetId,
+      name: file.name,
+      mime: file.mime,
+      bytes: file.bytes,
+      originalPath: file.originalPath
+    })),
+    nodes: files.value.map((file) => ({
+      id: file.nodeId,
+      type: 'image',
+      assetId: file.assetId,
+      name: file.name,
+      x: file.node.x || 0,
+      y: file.node.y || 0,
+      width: file.node.width || 1,
+      height: file.node.height || 1,
+      scaleX: file.node.scaleX ?? 1,
+      scaleY: file.node.scaleY ?? 1,
+      rotation: file.node.rotation || 0,
+      skewX: file.node.skewX || 0,
+      skewY: file.node.skewY || 0,
+      opacity: file.node.opacity ?? 1,
+      visible: file.node.visible ?? true,
+      locked: file.node.locked ?? false
+    }))
+  })
+
+  const rememberCanvasState = () => {
+    if (!restoringHistory) history.push(exportProject())
+  }
+
+  const createImageRecord = ({ assetId, bytes, file, node, nodeId, originalPath }) => {
+    const imageRecord = {
+      assetId,
+      bytes,
+      mime: file.type || 'application/octet-stream',
+      name: file.name,
+      node,
+      nodeId,
+      originalPath
+    }
+
+    node.on(PointerEvent.TAP, () => {
+      selectedImage.value = imageRecord
+    })
+
+    return imageRecord
+  }
+
+  const mount = (view) => {
+    app.value = new App({
+      view,
+      ...getManualWheelZoomInteractionConfig(),
+      editor: {
+        boxSelect: true,
+        multipleSelect: true
+      }
+    })
+    app.value.editor.on(TRANSFORM_HISTORY_EVENTS, (event) => {
+      transformHistory.remember(event)
+    })
+    app.value.editor.editBox.on(TRANSFORM_HISTORY_RESET_EVENTS, () => {
+      transformHistory.reset()
+    })
+  }
+
+  const toCanvasPoint = (clientPoint) => {
+    const rect = app.value.view.getBoundingClientRect()
+    const tree = app.value.tree
+
+    return {
+      x: (clientPoint.x - rect.left - (tree.x || 0)) / zoom.value,
+      y: (clientPoint.y - rect.top - (tree.y || 0)) / zoom.value
+    }
   }
 
   const getSelectedRecords = () => {
@@ -321,6 +384,7 @@ export function useLeaferImageEditor() {
 
     if (app.value?.tree) {
       app.value.tree.scale = zoom.value
+      syncEditorSelectionOverlay(app.value.editor)
     }
   }
 
@@ -368,39 +432,22 @@ export function useLeaferImageEditor() {
   const zoomInAt = (clientPoint) => setZoomAt(zoom.value * ZOOM_FACTOR, clientPoint)
   const zoomOutAt = (clientPoint) => setZoomAt(zoom.value / ZOOM_FACTOR, clientPoint)
 
-  const exportProject = () => ({
-    version: MABEL_PROJECT_FORMAT_VERSION,
-    canvas: {
-      zoom: zoom.value,
-      background: 'dot-grid'
-    },
-    assets: files.value.map((file) => ({
-      id: file.assetId,
-      name: file.name,
-      mime: file.mime,
-      bytes: file.bytes,
-      originalPath: file.originalPath
-    })),
-    nodes: files.value.map((file) => ({
-      id: file.nodeId,
-      type: 'image',
-      assetId: file.assetId,
-      name: file.name,
-      x: file.node.x || 0,
-      y: file.node.y || 0,
-      width: file.node.width || 1,
-      height: file.node.height || 1,
-      rotation: file.node.rotation || 0,
-      opacity: file.node.opacity ?? 1,
-      visible: file.node.visible ?? true,
-      locked: file.node.locked ?? false
-    }))
-  })
-
-  const loadProject = async (project, onProgress = () => {}) => {
+  const loadProject = async (
+    project,
+    onProgress = () => {},
+    { resetHistory = true, fitView = true } = {}
+  ) => {
     if (!app.value) return
 
+    const previousView = {
+      zoom: zoom.value,
+      position: {
+        x: app.value.tree?.x || 0,
+        y: app.value.tree?.y || 0
+      }
+    }
     clearCanvas()
+    if (resetHistory) history.clear()
     const currentLoadToken = loadToken
     setZoom(project.canvas?.zoom || 1)
 
@@ -428,7 +475,11 @@ export function useLeaferImageEditor() {
           y: projectNode.y,
           width: projectNode.width,
           height: projectNode.height,
+          scaleX: projectNode.scaleX ?? 1,
+          scaleY: projectNode.scaleY ?? 1,
           rotation: projectNode.rotation,
+          skewX: projectNode.skewX || 0,
+          skewY: projectNode.skewY || 0,
           opacity: projectNode.opacity,
           visible: projectNode.visible,
           locked: projectNode.locked,
@@ -456,7 +507,24 @@ export function useLeaferImageEditor() {
 
     if (currentLoadToken !== loadToken) return
     files.value = importedFiles
-    fitToContent()
+    if (fitView) {
+      fitToContent()
+    } else {
+      applyView({ nextZoom: previousView.zoom, position: previousView.position })
+    }
+  }
+
+  const undo = async () => {
+    const snapshot = history.undo()
+    if (!snapshot) return false
+
+    restoringHistory = true
+    try {
+      await loadProject(snapshot, () => {}, { resetHistory: false, fitView: false })
+    } finally {
+      restoringHistory = false
+    }
+    return true
   }
 
   const destroy = () => {
@@ -479,6 +547,7 @@ export function useLeaferImageEditor() {
     selectedImageName,
     selectedOriginalPath,
     showSelectedInFolder: () => window.api.files.showInFolder(selectedOriginalPath.value),
+    undo,
     zoomAtFactor,
     zoomIn,
     zoomInAt,

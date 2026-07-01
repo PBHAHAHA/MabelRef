@@ -13,8 +13,13 @@ describe('canvas keyboard shortcuts', () => {
     assert.equal(getCanvasShortcut({ key: 'R', ctrlKey: false, metaKey: true }), 'arrange')
   })
 
+  it('maps ctrl or command z to undo canvas edits', () => {
+    assert.equal(getCanvasShortcut({ key: 'z', ctrlKey: true, metaKey: false }), 'undo')
+    assert.equal(getCanvasShortcut({ key: 'Z', ctrlKey: false, metaKey: true }), 'undo')
+  })
+
   it('ignores unrelated shortcuts', () => {
     assert.equal(getCanvasShortcut({ key: 's', ctrlKey: false, metaKey: false }), null)
-    assert.equal(getCanvasShortcut({ key: 'z', ctrlKey: true, metaKey: false }), null)
+    assert.equal(getCanvasShortcut({ key: 'x', ctrlKey: true, metaKey: false }), null)
   })
 })

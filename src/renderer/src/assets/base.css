@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 无
+ * [OUTPUT]: 提供全局 CSS 变量与基础排版样式
+ * [POS]: assets/base.css - 渲染层基础变量与全局排版文件
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 :root {
   --ev-c-white: #f4f7fb;
   --ev-c-white-soft: #d7dde7;

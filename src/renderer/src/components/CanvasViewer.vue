@@ -1,18 +1,19 @@
 <script setup>
 /**
- * [INPUT]: 依赖 useLeaferImageEditor、clipboardImages、focusMode prop 与用户拖入/粘贴/浏览选择的本地图片 File
- * [OUTPUT]: 对外提供基于 Leafer Editor 的多图片画布查看器、首次打开拖拽引导、专注模式画布、按鼠标位置粘贴图片、选中图片快捷排版、原始路径定位、状态更新与项目快照读写能力
+ * [INPUT]: 依赖 useLeaferImageEditor、clipboardImages、focusMode prop 与用户拖入/粘贴/浏览选择的本地图片 File 或 .mabel File
+ * [OUTPUT]: 对外提供基于 Leafer Editor 的多图片画布查看器、首次打开拖拽导入/打开项目引导、专注模式画布、按鼠标位置粘贴图片、选中图片快捷排版、原始路径定位、状态更新与项目快照读写能力
  * [POS]: renderer/components 的核心画布容器，被 App.vue 消费
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Maximize } from 'lucide-vue-next'
 import { getCanvasShortcut } from '../canvas/canvasShortcuts.mjs'
+import { getDroppedMabelProjectPath, getImageFiles } from '../canvas/canvasImportFiles.mjs'
 import { getClipboardImageFiles } from '../canvas/clipboardImages.mjs'
 import { getWheelZoomFactor } from '../canvas/viewportZoom.mjs'
 import { useLeaferImageEditor } from '../canvas/useLeaferImageEditor'
 
-const emit = defineEmits(['image-loaded', 'save-project', 'selected-image-change'])
+const emit = defineEmits(['image-loaded', 'open-project-file', 'save-project', 'selected-image-change'])
 
 defineProps({
   focusMode: {
@@ -39,13 +40,18 @@ const importFiles = async (files) => {
   return count
 }
 
-const getImageFiles = (files) => files.filter((file) => file.type?.startsWith('image/'))
-
 const handleDrop = async (event) => {
   event.preventDefault()
   isDragging.value = false
-  const files = getImageFiles([...event.dataTransfer.files])
-  await importFiles(files)
+  const droppedFiles = [...event.dataTransfer.files]
+  const projectPath = getDroppedMabelProjectPath(droppedFiles, window.api.files.getPath)
+
+  if (projectPath) {
+    emit('open-project-file', projectPath)
+    return
+  }
+
+  await importFiles(getImageFiles(droppedFiles))
 }
 
 const browseFiles = () => {
@@ -116,6 +122,13 @@ const handleKeydown = (event) => {
   event.preventDefault()
   if (shortcut === 'save') {
     emit('save-project')
+    return
+  }
+
+  if (shortcut === 'undo') {
+    editor.undo().then((undone) => {
+      if (undone) statusText.value = '已撤销'
+    })
     return
   }
 
@@ -234,8 +247,8 @@ onBeforeUnmount(() => {
           <b></b>
         </div>
       </div>
-      <p>拖入图片文件</p>
-      <span>支持 JPG、PNG、WEBP 等常见图片格式</span>
+      <p>拖入图片或 Mabel 项目</p>
+      <span>支持 JPG、PNG、WEBP 等常见图片格式，也支持 .mabel 项目文件</span>
       <button type="button" @click="browseFiles">浏览文件</button>
     </div>
     <input

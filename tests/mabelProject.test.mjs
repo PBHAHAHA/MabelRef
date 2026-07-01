@@ -45,7 +45,11 @@ describe('mabel project format', () => {
           y: 36,
           width: 220,
           height: 160,
+          scaleX: 1.4,
+          scaleY: 0.8,
           rotation: 15,
+          skewX: 4,
+          skewY: -2,
           opacity: 0.8,
           visible: true,
           locked: false

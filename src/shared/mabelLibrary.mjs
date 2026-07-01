@@ -119,7 +119,13 @@ export function addProjectToCategory(
   if (!filePath) return normalized
 
   normalized.categories = normalized.categories.map((category) => {
-    if (category.id !== categoryId) return category
+    const itemsWithoutProject = category.items.filter((project) => project.path !== filePath)
+    if (category.id !== categoryId) {
+      return {
+        ...category,
+        items: itemsWithoutProject
+      }
+    }
 
     const item = {
       path: filePath,
@@ -129,7 +135,7 @@ export function addProjectToCategory(
 
     return {
       ...category,
-      items: [item, ...category.items.filter((project) => project.path !== filePath)]
+      items: [item, ...itemsWithoutProject]
     }
   })
 

@@ -7,6 +7,7 @@
  */
 import {
   FilePlus2,
+  FolderSearch,
   FolderOpen,
   PanelLeftClose,
   PanelLeftOpen,
@@ -14,7 +15,14 @@ import {
   PinOff,
   Plus,
   Save,
-  Trash2
+  Trash2,
+  ChevronDown,
+  ChevronRight,
+  FileImage,
+  Folder,
+  Lightbulb,
+  Briefcase,
+  GraduationCap
 } from 'lucide-vue-next'
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { createEmptyMabelProject } from '../../shared/mabelProject.mjs'
@@ -39,6 +47,41 @@ const isCreatingCategory = ref(false)
 const newCategoryName = ref('')
 const newCategoryInput = ref(null)
 let projectOpenRequestId = 0
+
+const collapsedCategories = ref({})
+const toggleCategoryCollapse = (categoryId) => {
+  collapsedCategories.value[categoryId] = !collapsedCategories.value[categoryId]
+}
+
+const getCategoryStyle = (name) => {
+  const lower = name.toLowerCase()
+  if (lower.includes('灵感') || lower.includes('idea') || lower.includes('inspire')) {
+    return {
+      icon: Lightbulb,
+      color: '#8fbe98',
+      bg: 'rgba(111, 167, 122, 0.13)'
+    }
+  }
+  if (lower.includes('素材') || lower.includes('asset') || lower.includes('design') || lower.includes('设计')) {
+    return {
+      icon: Briefcase,
+      color: '#88b3a2',
+      bg: 'rgba(113, 156, 139, 0.13)'
+    }
+  }
+  if (lower.includes('教程') || lower.includes('course') || lower.includes('learn') || lower.includes('study') || lower.includes('figma')) {
+    return {
+      icon: GraduationCap,
+      color: '#9caf88',
+      bg: 'rgba(139, 160, 121, 0.13)'
+    }
+  }
+  return {
+    icon: Folder,
+    color: '#909b96',
+    bg: 'rgba(143, 179, 158, 0.09)'
+  }
+}
 
 const nextFrame = () =>
   new Promise((resolve) => {
@@ -270,6 +313,11 @@ const removeProjectFromLibraryCategory = async (category, project) => {
   library.value = await window.api.library.removeProjectFromCategory(category.id, project.path)
 }
 
+const showLibraryProjectInFolder = async (project) => {
+  if (!project?.path) return
+  await window.api.files.showInFolder(project.path)
+}
+
 const handleRecentDragStart = (event, project) => {
   event.dataTransfer.effectAllowed = 'copy'
   event.dataTransfer.setData('application/x-mabel-project', JSON.stringify(project))
@@ -303,10 +351,12 @@ const runContextAction = async (action) => {
   closeLibraryContextMenu()
   if (!menu) return
 
-  if (action === 'create-category') await startCreateCategory()
   if (action === 'rename-category') await renameLibraryCategory(menu.payload.category)
   if (action === 'remove-category') await removeLibraryCategory(menu.payload.category)
   if (action === 'add-current') await addCurrentProjectToCategory(menu.payload.category)
+  if (action === 'show-project-folder') {
+    await showLibraryProjectInFolder(menu.payload.project)
+  }
   if (action === 'remove-project') {
     await removeProjectFromLibraryCategory(menu.payload.category, menu.payload.project)
   }
@@ -386,14 +436,6 @@ onBeforeUnmount(() => {
         </button>
         <button
           type="button"
-          :aria-label="isCanvasFocusMode ? '恢复界面' : '只显示画布'"
-          :title="isCanvasFocusMode ? '恢复界面' : '只显示画布'"
-          @click="setCanvasFocusMode(!isCanvasFocusMode)"
-        >
-          <span :class="isCanvasFocusMode ? 'focus-exit-icon' : 'focus-enter-icon'"></span>
-        </button>
-        <button
-          type="button"
           :aria-label="isWindowPinned ? '取消置顶' : '置顶窗口'"
           :title="isWindowPinned ? '取消置顶' : '置顶窗口'"
           @click="toggleWindowPin"
@@ -431,26 +473,31 @@ onBeforeUnmount(() => {
       <aside
         v-if="!isCanvasFocusMode && isLibraryOpen"
         class="library-sidebar"
-        @contextmenu="openLibraryContextMenu($event, 'library')"
       >
         <section class="library-section">
           <div class="library-section-header">
             <span>最近打开</span>
+            <span class="section-count">{{ library.recentProjects.length }}</span>
           </div>
-          <button
-            v-for="project in library.recentProjects"
-            :key="project.path"
-            type="button"
-            class="library-project"
-            :class="{ active: project.path === activeProjectPath }"
-            draggable="true"
-            :title="project.path"
-            @click="openProjectPath(project.path)"
-            @dragstart="handleRecentDragStart($event, project)"
-          >
-            <span>{{ project.name }}</span>
-          </button>
-          <p v-if="library.recentProjects.length === 0" class="library-empty">还没有保存的项目</p>
+          <div class="library-section-items">
+            <button
+              v-for="project in library.recentProjects"
+              :key="project.path"
+              type="button"
+              class="library-project"
+              :class="{ active: project.path === activeProjectPath }"
+              draggable="true"
+              :title="project.path"
+              @click="openProjectPath(project.path)"
+              @dragstart="handleRecentDragStart($event, project)"
+            >
+              <span class="project-icon recent">
+                <FileImage :size="14" :stroke-width="2" />
+              </span>
+              <span class="project-name">{{ project.name }}</span>
+            </button>
+            <p v-if="library.recentProjects.length === 0" class="library-empty">还没有保存的项目</p>
+          </div>
         </section>
 
         <section class="library-section">
@@ -483,25 +530,51 @@ onBeforeUnmount(() => {
             v-for="category in library.categories"
             :key="category.id"
             class="library-category"
+            :class="{ collapsed: collapsedCategories[category.id] }"
             @dragover.prevent
             @drop="handleCategoryDrop($event, category)"
             @contextmenu.stop="openLibraryContextMenu($event, 'category', { category })"
           >
-            <div class="library-category-name">{{ category.name }}</div>
-            <button
-              v-for="project in category.items"
-              :key="`${category.id}:${project.path}`"
-              type="button"
-              class="library-project nested"
-              :class="{ active: project.path === activeProjectPath }"
-              :title="project.path"
-              @click="openProjectPath(project.path)"
-              @contextmenu.stop="
-                openLibraryContextMenu($event, 'category-project', { category, project })
-              "
+            <div 
+              class="library-category-header"
+              @click="toggleCategoryCollapse(category.id)"
             >
-              <span>{{ project.name }}</span>
-            </button>
+              <span class="category-chevron">
+                <ChevronDown v-if="!collapsedCategories[category.id]" :size="14" />
+                <ChevronRight v-else :size="14" />
+              </span>
+              <span 
+                class="category-icon-wrapper" 
+                :style="{ color: getCategoryStyle(category.name).color, backgroundColor: getCategoryStyle(category.name).bg }"
+              >
+                <component :is="getCategoryStyle(category.name).icon" :size="14" :stroke-width="2" />
+              </span>
+              <span class="category-title">{{ category.name }}</span>
+              <span class="category-count">{{ category.items?.length || 0 }}</span>
+            </div>
+
+            <!-- Nested items -->
+            <div v-if="!collapsedCategories[category.id]" class="library-category-items">
+              <button
+                v-for="project in category.items"
+                :key="`${category.id}:${project.path}`"
+                type="button"
+                class="library-project nested"
+                :class="{ active: project.path === activeProjectPath }"
+                draggable="true"
+                :title="project.path"
+                @click="openProjectPath(project.path)"
+                @dragstart="handleRecentDragStart($event, project)"
+                @contextmenu.stop="
+                  openLibraryContextMenu($event, 'category-project', { category, project })
+                "
+              >
+                <span class="project-icon" :style="{ '--project-accent': getCategoryStyle(category.name).color }">
+                  <FileImage :size="14" :stroke-width="2" />
+                </span>
+                <span class="project-name">{{ project.name }}</span>
+              </button>
+            </div>
           </div>
           <p v-if="library.categories.length === 0" class="library-empty">右键或点加号新建分类</p>
         </section>
@@ -512,6 +585,7 @@ onBeforeUnmount(() => {
         ref="canvasViewer"
         :focus-mode="isCanvasFocusMode"
         @image-loaded="handleImageLoaded"
+        @open-project-file="openProjectPath"
         @save-project="saveProject"
         @selected-image-change="handleSelectedImageChange"
       />
@@ -523,13 +597,6 @@ onBeforeUnmount(() => {
       :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
       @click.stop
     >
-      <button
-        v-if="contextMenu.type === 'library'"
-        type="button"
-        @click="runContextAction('create-category')"
-      >
-        新建分类
-      </button>
       <button
         v-if="contextMenu.type === 'category'"
         type="button"
@@ -551,6 +618,14 @@ onBeforeUnmount(() => {
         @click="runContextAction('remove-category')"
       >
         删除分类
+      </button>
+      <button
+        v-if="contextMenu.type === 'category-project'"
+        type="button"
+        @click="runContextAction('show-project-folder')"
+      >
+        <FolderSearch :size="13" :stroke-width="2" />
+        打开文件夹
       </button>
       <button
         v-if="contextMenu.type === 'category-project'"

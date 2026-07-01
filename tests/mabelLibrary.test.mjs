@@ -39,4 +39,18 @@ describe('mabel library', () => {
     assert.equal(library.recentProjects.length, 1)
     assert.equal(library.categories[0].items.length, 0)
   })
+
+  it('moves a project between categories instead of duplicating it', () => {
+    let library = addCategory(createEmptyLibrary(), '角色参考')
+    library = addCategory(library, '场景参考')
+    const [firstCategory, secondCategory] = library.categories
+
+    library = addProjectToCategory(library, firstCategory.id, '/tmp/demo.mabel', 'demo')
+    library = addProjectToCategory(library, secondCategory.id, '/tmp/demo.mabel', 'demo')
+
+    assert.deepEqual(
+      library.categories.map((category) => category.items.map((item) => item.path)),
+      [[], ['/tmp/demo.mabel']]
+    )
+  })
 })

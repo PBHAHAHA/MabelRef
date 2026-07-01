@@ -10,6 +10,7 @@ export function getCanvasShortcut(event) {
   const key = event.key.toLowerCase()
   if (key === 's') return 'save'
   if (key === 'r') return 'arrange'
+  if (key === 'z') return 'undo'
 
   return null
 }
