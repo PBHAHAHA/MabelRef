@@ -94,8 +94,8 @@ function registerProjectFiles(window) {
 
   ipcMain.handle('project:open', async () => {
     const result = await dialog.showOpenDialog(window, {
-      title: '打开 Mabel 项目',
-      filters: [{ name: 'Mabel Project', extensions: ['mabel'] }],
+      title: '打开 MabelRef 项目',
+      filters: [{ name: 'MabelRef Project', extensions: ['mabel'] }],
       properties: ['openFile']
     })
 
@@ -136,9 +136,9 @@ function registerProjectFiles(window) {
 
     if (!targetPath) {
       const result = await dialog.showSaveDialog(window, {
-        title: '保存 Mabel 项目',
+        title: '保存 MabelRef 项目',
         defaultPath: join(app.getPath('documents'), '未命名.mabel'),
-        filters: [{ name: 'Mabel Project', extensions: ['mabel'] }]
+        filters: [{ name: 'MabelRef Project', extensions: ['mabel'] }]
       })
 
       if (result.canceled || !result.filePath) {
@@ -242,7 +242,7 @@ function createWindow() {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.electron')
+  electronApp.setAppUserModelId('app.mabelref.desktop')
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

@@ -296,7 +296,7 @@ const renameLibraryCategory = async (category) => {
 }
 
 const removeLibraryCategory = async (category) => {
-  if (!window.confirm(`删除分类「${category.name}」？不会删除真实 Mabel 文件。`)) return
+  if (!window.confirm(`删除分类「${category.name}」？不会删除真实 MabelRef 文件。`)) return
 
   library.value = await window.api.library.removeCategory(category.id)
 }

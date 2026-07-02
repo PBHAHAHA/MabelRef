@@ -1,6 +1,6 @@
-# mabel-boxs
+# MabelRef
 
-An Electron application with Vue
+A lightweight visual reference board for creators.
 
 ## Recommended IDE Setup
 

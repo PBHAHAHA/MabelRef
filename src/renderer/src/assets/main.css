@@ -717,119 +717,14 @@ button {
   color: #86a990;
 }
 
-.empty-import-art {
-  position: relative;
-  width: 142px;
-  height: 98px;
-  margin-bottom: 20px;
-  animation: empty-import-float 3.2s ease-in-out infinite;
-}
-
-.empty-import-dash {
-  position: absolute;
-  top: 36px;
-  left: 12px;
-  width: 42px;
-  height: 42px;
-  border: 3px solid currentColor;
-  border-radius: 0;
-  opacity: 0.5;
-  transform: rotate(-5deg);
-}
-
-.empty-import-dash::before,
-.empty-import-dash::after {
-  position: absolute;
-  content: '';
-}
-
-.empty-import-dash::before {
-  inset: -7px 4px 5px -5px;
-  border: 2px solid currentColor;
-  opacity: 0.3;
-}
-
-.empty-import-dash::after {
-  right: 8px;
-  bottom: 9px;
-  width: 18px;
-  height: 3px;
-  background: currentColor;
-  opacity: 0.45;
-  transform: rotate(-8deg);
-}
-
-.empty-import-image {
-  position: absolute;
-  top: 18px;
-  left: 50%;
-  width: 50px;
-  height: 50px;
-  border: 3px solid currentColor;
-  border-radius: 0;
-  background: #14181b;
-  opacity: 0.66;
-  transform: translateX(-50%) rotate(3deg);
-}
-
-.empty-import-image::before {
-  position: absolute;
-  inset: 4px -7px -6px 5px;
-  border: 2px solid currentColor;
-  content: '';
-  opacity: 0.32;
-}
-
-.empty-import-image::after {
-  position: absolute;
-  top: 12px;
-  right: 9px;
-  width: 23px;
-  height: 3px;
-  background: currentColor;
-  content: '';
-  opacity: 0.45;
-  transform: rotate(7deg);
-}
-
-.empty-import-image span {
-  position: absolute;
-  top: 11px;
-  left: 68px;
-  width: 40px;
-  height: 40px;
-  border: 3px solid currentColor;
-  border-radius: 0;
-  background: #14181b;
-  box-shadow: 5px 4px 0 rgba(103, 109, 106, 0.18);
-  opacity: 0.76;
-  transform: rotate(7deg);
-}
-
-.empty-import-image i,
-.empty-import-image b {
-  position: absolute;
+.empty-import-logo {
   display: block;
-  background: currentColor;
-  content: '';
-}
-
-.empty-import-image i {
-  left: -22px;
-  bottom: 8px;
-  width: 24px;
-  height: 3px;
-  opacity: 0.38;
-  transform: rotate(-12deg);
-}
-
-.empty-import-image b {
-  right: -55px;
-  bottom: 5px;
-  width: 20px;
-  height: 3px;
-  opacity: 0.42;
-  transform: rotate(10deg);
+  width: min(138px, 42vw);
+  height: auto;
+  margin-bottom: 22px;
+  opacity: 0.72;
+  animation: empty-import-float 3.2s ease-in-out infinite;
+  user-select: none;
 }
 
 .canvas-empty-import p {
@@ -898,7 +793,7 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .canvas-empty-import,
-  .empty-import-art {
+  .empty-import-logo {
     animation: none;
   }
 
