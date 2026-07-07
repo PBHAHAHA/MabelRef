@@ -6,7 +6,7 @@
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Maximize, Trash2 } from 'lucide-vue-next'
+import { FileUp, Maximize, Sparkles, X } from 'lucide-vue-next'
 import logoUrl from '../assets/logo1.png'
 import { getCanvasShortcut } from '../canvas/canvasShortcuts.mjs'
 import { getDroppedMabelProjectPath, getImageFiles } from '../canvas/canvasImportFiles.mjs'
@@ -16,10 +16,14 @@ import { useLeaferImageEditor } from '../canvas/useLeaferImageEditor'
 
 const emit = defineEmits(['image-loaded', 'open-project-file', 'save-project', 'selected-image-change'])
 
-defineProps({
+const props = defineProps({
   focusMode: {
     type: Boolean,
     default: false
+  },
+  shortcuts: {
+    type: Object,
+    default: () => ({})
   }
 })
 
@@ -29,7 +33,14 @@ const isDragging = ref(false)
 const lastPointer = ref(null)
 const saveProgress = ref(null)
 const statusText = ref('')
+const imageContextMenu = ref(null)
+const aiEditDialog = ref(null)
+const aiEditPrompt = ref('')
+const aiEditStatus = ref('')
+const isAiEditing = ref(false)
 const editor = useLeaferImageEditor()
+const SETTINGS_STORAGE_KEY = 'mabelref.settings'
+const SHOW_AI_FEATURES = false
 let pendingWheelDelta = 0
 let pendingWheelPoint = null
 let pendingWheelFrame = 0
@@ -85,6 +96,91 @@ const handlePointerMove = (event) => {
   lastPointer.value = { x: event.clientX, y: event.clientY }
 }
 
+const closeImageContextMenu = () => {
+  imageContextMenu.value = null
+}
+
+const handleCanvasContextMenu = (event) => {
+  event.preventDefault()
+  if (!SHOW_AI_FEATURES) return
+
+  const image = editor.selectImageAtClientPoint({ x: event.clientX, y: event.clientY })
+  if (!image || props.focusMode) {
+    closeImageContextMenu()
+    return
+  }
+
+  imageContextMenu.value = {
+    x: event.clientX,
+    y: event.clientY,
+    imageName: image.name,
+    nodeId: image.nodeId
+  }
+}
+
+const openAiEditDialog = () => {
+  if (!imageContextMenu.value) return
+
+  aiEditDialog.value = {
+    imageName: imageContextMenu.value.imageName,
+    nodeId: imageContextMenu.value.nodeId
+  }
+  aiEditPrompt.value = ''
+  aiEditStatus.value = ''
+  closeImageContextMenu()
+}
+
+const closeAiEditDialog = () => {
+  if (isAiEditing.value) return
+
+  aiEditDialog.value = null
+  aiEditPrompt.value = ''
+  aiEditStatus.value = ''
+}
+
+const getAiSettings = () => {
+  try {
+    return JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || '{}')?.ai || {}
+  } catch {
+    return {}
+  }
+}
+
+const submitAiEditPrompt = async () => {
+  if (!aiEditPrompt.value.trim()) return
+  if (!aiEditDialog.value) return
+
+  const settings = getAiSettings()
+  const image = editor.getImageEditSource(aiEditDialog.value.nodeId)
+  if (!image) {
+    aiEditStatus.value = '找不到这张图片'
+    return
+  }
+
+  isAiEditing.value = true
+  aiEditStatus.value = '正在生成'
+
+  try {
+    const result = await window.api.ai.editImage({
+      settings,
+      image,
+      prompt: aiEditPrompt.value
+    })
+    await editor.replaceImageWithBytes({
+      nodeId: aiEditDialog.value.nodeId,
+      bytes: result.bytes,
+      mime: result.mime
+    })
+    aiEditStatus.value = '已完成'
+    isAiEditing.value = false
+    closeAiEditDialog()
+  } catch (error) {
+    aiEditStatus.value = error?.message || 'AI 修改失败'
+  } finally {
+    isAiEditing.value = false
+  }
+}
+
 const handleDragOver = (event) => {
   event.preventDefault()
   isDragging.value = true
@@ -116,10 +212,11 @@ const handleWheel = (event) => {
 }
 
 const handleKeydown = (event) => {
-  const shortcut = getCanvasShortcut(event)
+  const shortcut = getCanvasShortcut(event, props.shortcuts)
   if (!shortcut) return
 
   event.preventDefault()
+  closeImageContextMenu()
   if (shortcut === 'save') {
     emit('save-project')
     return
@@ -151,12 +248,9 @@ const handleKeydown = (event) => {
     return
   }
 
-  editor.layoutSelectedImages()
-}
-
-const deleteSelectedImages = () => {
-  const deletedCount = editor.deleteSelectedImages()
-  if (deletedCount > 0) emit('image-loaded', -deletedCount)
+  if (shortcut === 'arrange') {
+    editor.layoutSelectedImages()
+  }
 }
 
 const showSelectedInFolder = async () => {
@@ -217,6 +311,21 @@ watch(
   }
 )
 
+watch(
+  () => editor.imageContextMenuRequest.value,
+  (request) => {
+    if (!SHOW_AI_FEATURES) return
+    if (!request || props.focusMode) return
+
+    imageContextMenu.value = {
+      x: request.x,
+      y: request.y,
+      imageName: request.imageName,
+      nodeId: request.nodeId
+    }
+  }
+)
+
 onMounted(() => {
   editor.mount(editorHost.value)
   editorHost.value?.parentElement?.focus()
@@ -238,6 +347,8 @@ onBeforeUnmount(() => {
     @dragleave="isDragging = false"
     @paste="handlePaste"
     @pointermove="handlePointerMove"
+    @contextmenu="handleCanvasContextMenu"
+    @click="closeImageContextMenu"
     @wheel="handleWheel"
     @keydown="handleKeydown"
   >
@@ -252,16 +363,52 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <button
-      v-if="!focusMode && editor.selectedImageName.value"
-      type="button"
-      class="canvas-delete-selected"
-      title="删除选中图片"
-      aria-label="删除选中图片"
-      @click="deleteSelectedImages"
+    <div
+      v-if="SHOW_AI_FEATURES && imageContextMenu"
+      class="canvas-image-context-menu"
+      :style="{ left: `${imageContextMenu.x}px`, top: `${imageContextMenu.y}px` }"
+      @click.stop
+      @contextmenu.stop.prevent
     >
-      <Trash2 :size="16" :stroke-width="2" />
-    </button>
+      <button type="button" @click="openAiEditDialog">
+        <Sparkles :size="15" :stroke-width="2" />
+        <span>AI 修改</span>
+      </button>
+    </div>
+
+    <div
+      v-if="SHOW_AI_FEATURES && aiEditDialog"
+      class="canvas-ai-edit-backdrop"
+      @click.self="closeAiEditDialog"
+      @contextmenu.stop.prevent
+    >
+      <form class="canvas-ai-edit-dialog" @submit.prevent="submitAiEditPrompt">
+        <div class="canvas-ai-edit-header">
+          <div>
+            <p>AI 修改</p>
+            <span>{{ aiEditDialog.imageName }}</span>
+          </div>
+          <button type="button" title="关闭" aria-label="关闭" @click="closeAiEditDialog">
+            <X :size="16" :stroke-width="2" />
+          </button>
+        </div>
+
+        <textarea
+          v-model="aiEditPrompt"
+          rows="5"
+          autofocus
+          placeholder="输入你想怎么修改这张图"
+          :disabled="isAiEditing"
+        ></textarea>
+
+        <div class="canvas-ai-edit-footer">
+          <span>{{ aiEditStatus }}</span>
+          <button type="submit" :disabled="!aiEditPrompt.trim() || isAiEditing">
+            {{ isAiEditing ? '生成中' : '生成修改' }}
+          </button>
+        </div>
+      </form>
+    </div>
 
     <div
       ref="editorHost"
@@ -282,7 +429,10 @@ onBeforeUnmount(() => {
       <img class="empty-import-logo" :src="logoUrl" alt="" aria-hidden="true" />
       <p>拖入图片或 MabelRef 项目</p>
       <span>支持 JPG、PNG、WEBP 等常见图片格式，也支持 .mabel 项目文件</span>
-      <button type="button" @click="browseFiles">浏览文件</button>
+      <button type="button" @click="browseFiles">
+        <FileUp class="empty-import-button-icon" :size="15" :stroke-width="2" />
+        <span>打开文件</span>
+      </button>
     </div>
     <input
       ref="fileInput"

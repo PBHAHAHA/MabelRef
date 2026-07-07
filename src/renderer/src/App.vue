@@ -8,13 +8,11 @@
 import {
   FilePlus2,
   FolderSearch,
-  FolderOpen,
   PanelLeftClose,
   PanelLeftOpen,
   Pin,
   PinOff,
   Plus,
-  Save,
   Trash2,
   ChevronDown,
   ChevronRight,
@@ -23,11 +21,21 @@ import {
   Lightbulb,
   Briefcase,
   GraduationCap,
-  Contrast
+  Contrast,
+  Settings,
+  X
 } from 'lucide-vue-next'
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { createEmptyMabelProject } from '../../shared/mabelProject.mjs'
 import CanvasViewer from './components/CanvasViewer.vue'
+import {
+  formatShortcut,
+  getEventShortcut,
+  getShortcutAction,
+  getShortcutSettings,
+  SHORTCUT_ACTIONS,
+  SHORTCUT_LABELS
+} from './shortcuts.mjs'
 
 const isMaximized = ref(false)
 const canvasViewer = ref(null)
@@ -45,12 +53,25 @@ const isTopBarDragging = ref(false)
 const isLibraryOpen = ref(false)
 const library = ref({ recentProjects: [], categories: [] })
 const contextMenu = ref(null)
+const isSettingsDialogOpen = ref(false)
+const settingsSaveStatus = ref('')
+const shortcutCaptureAction = ref('')
+const shortcutSettings = ref(getShortcutSettings())
+const aiSettings = ref({
+  endpoint: 'https://api.lk888.ai',
+  model: 'gpt-image-2',
+  apiKey: '',
+  size: 'auto',
+  quality: 'auto'
+})
 const isCreatingCategory = ref(false)
 const newCategoryName = ref('')
 const newCategoryInput = ref(null)
 const editingLibraryItem = ref(null)
 const editingLibraryName = ref('')
 let projectOpenRequestId = 0
+const SETTINGS_STORAGE_KEY = 'mabelref.settings'
+const SHOW_AI_FEATURES = false
 
 const collapsedCategories = ref({})
 const toggleCategoryCollapse = (categoryId) => {
@@ -112,8 +133,141 @@ const toggleLibrarySidebar = () => {
   }
 }
 
+const isEditableShortcutTarget = (target) => {
+  const tagName = target?.tagName?.toLowerCase()
+
+  return tagName === 'input' || tagName === 'textarea' || target?.isContentEditable
+}
+
+const handleWindowKeydown = (event) => {
+  if (shortcutCaptureAction.value) {
+    event.preventDefault()
+    setShortcutFromEvent(event)
+    return
+  }
+
+  if (event.key === 'Escape' && isSettingsDialogOpen.value) {
+    event.preventDefault()
+    isSettingsDialogOpen.value = false
+    return
+  }
+
+  if (getShortcutAction(event, shortcutSettings.value) !== 'sidebar') return
+  if (isEditableShortcutTarget(event.target)) return
+
+  event.preventDefault()
+  toggleLibrarySidebar()
+}
+
 const toggleWindowPin = async () => {
   isWindowPinned.value = await window.api.windowControls.togglePin()
+}
+
+const openSettingsDialog = () => {
+  closeLibraryContextMenu()
+  settingsSaveStatus.value = ''
+  isSettingsDialogOpen.value = true
+}
+
+const closeSettingsDialog = () => {
+  isSettingsDialogOpen.value = false
+  settingsSaveStatus.value = ''
+  shortcutCaptureAction.value = ''
+}
+
+const normalizeAiEndpoint = (endpoint) => {
+  const normalized = String(endpoint || '').trim().replace(/\/+$/, '')
+
+  if (!normalized) return 'https://api.lk888.ai'
+  if (normalized.endsWith('/v1/images/edits')) {
+    return normalized.slice(0, -'/v1/images/edits'.length) || 'https://api.lk888.ai'
+  }
+  if (normalized.endsWith('/v1/images/generations')) {
+    return normalized.slice(0, -'/v1/images/generations'.length) || 'https://api.lk888.ai'
+  }
+  if (normalized.endsWith('/v1/media/generate')) {
+    return normalized.slice(0, -'/v1/media/generate'.length) || 'https://api.lk888.ai'
+  }
+  if (normalized.endsWith('/v1')) {
+    return normalized.slice(0, -'/v1'.length) || 'https://api.lk888.ai'
+  }
+  return normalized
+}
+
+const loadSettings = () => {
+  try {
+    const settings = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || '{}')
+
+    shortcutSettings.value = getShortcutSettings(settings.shortcuts)
+    aiSettings.value = {
+      endpoint: normalizeAiEndpoint(settings.ai?.endpoint),
+      model: settings.ai?.model || 'gpt-image-2',
+      apiKey: settings.ai?.apiKey || '',
+      size: settings.ai?.size || 'auto',
+      quality: settings.ai?.quality || 'auto'
+    }
+  } catch {
+    shortcutSettings.value = getShortcutSettings()
+    aiSettings.value = {
+      endpoint: 'https://api.lk888.ai',
+      model: 'gpt-image-2',
+      apiKey: '',
+      size: 'auto',
+      quality: 'auto'
+    }
+  }
+}
+
+const persistSettings = () => {
+  localStorage.setItem(
+    SETTINGS_STORAGE_KEY,
+    JSON.stringify({
+      ai: {
+        endpoint: normalizeAiEndpoint(aiSettings.value.endpoint),
+        model: aiSettings.value.model.trim(),
+        apiKey: aiSettings.value.apiKey,
+        size: aiSettings.value.size,
+        quality: aiSettings.value.quality
+      },
+      shortcuts: shortcutSettings.value
+    })
+  )
+}
+
+const saveSettings = () => {
+  aiSettings.value.endpoint = normalizeAiEndpoint(aiSettings.value.endpoint)
+  aiSettings.value.model = aiSettings.value.model.trim()
+  persistSettings()
+  settingsSaveStatus.value = '已保存'
+}
+
+const startShortcutCapture = (action) => {
+  shortcutCaptureAction.value = action
+  settingsSaveStatus.value = '按下新的快捷键'
+}
+
+const setShortcutFromEvent = (event) => {
+  const shortcut = getEventShortcut(event)
+  if (!shortcut) return
+  if (shortcut === 'Escape') {
+    shortcutCaptureAction.value = ''
+    settingsSaveStatus.value = ''
+    return
+  }
+
+  shortcutSettings.value = {
+    ...shortcutSettings.value,
+    [shortcutCaptureAction.value]: shortcut
+  }
+  shortcutCaptureAction.value = ''
+  persistSettings()
+  settingsSaveStatus.value = '已保存'
+}
+
+const resetShortcuts = () => {
+  shortcutSettings.value = getShortcutSettings()
+  persistSettings()
+  settingsSaveStatus.value = '已恢复默认'
 }
 
 const setCanvasFocusMode = async (enabled) => {
@@ -435,15 +589,18 @@ const runContextAction = async (action) => {
 }
 
 onMounted(() => {
+  loadSettings()
   createNewProject()
   refreshLibrary()
   window.addEventListener('pointerup', handleWindowPointerUp)
   window.addEventListener('click', closeLibraryContextMenu)
+  window.addEventListener('keydown', handleWindowKeydown)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('pointerup', handleWindowPointerUp)
   window.removeEventListener('click', closeLibraryContextMenu)
+  window.removeEventListener('keydown', handleWindowKeydown)
 })
 </script>
 
@@ -500,12 +657,6 @@ onBeforeUnmount(() => {
         >
           <FilePlus2 class="window-control-icon" />
         </button>
-        <button type="button" aria-label="打开项目" title="打开项目" @click="openProject">
-          <FolderOpen class="window-control-icon" />
-        </button>
-        <button type="button" aria-label="保存项目" title="保存项目" @click="saveProject">
-          <Save class="window-control-icon" />
-        </button>
         <button
           type="button"
           :aria-label="isCanvasGrayscale ? '恢复彩色' : '转为黑白灰'"
@@ -517,6 +668,9 @@ onBeforeUnmount(() => {
             class="window-control-icon"
             :class="{ active: isCanvasGrayscale }"
           />
+        </button>
+        <button type="button" aria-label="设置" title="设置" @click="openSettingsDialog">
+          <Settings class="window-control-icon" />
         </button>
         <button
           type="button"
@@ -705,6 +859,7 @@ onBeforeUnmount(() => {
         :key="canvasSessionId"
         ref="canvasViewer"
         :focus-mode="isCanvasFocusMode"
+        :shortcuts="shortcutSettings"
         @image-loaded="handleImageLoaded"
         @open-project-file="openProjectPath"
         @save-project="saveProject"
@@ -764,6 +919,91 @@ onBeforeUnmount(() => {
         <Trash2 :size="13" :stroke-width="2" />
         从分类移除
       </button>
+    </div>
+
+    <div v-if="isSettingsDialogOpen" class="settings-backdrop" @click.self="closeSettingsDialog">
+      <section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <header class="settings-header">
+          <div>
+            <h2 id="settings-title">设置</h2>
+            <p>快捷键与 AI 配置</p>
+          </div>
+          <button type="button" aria-label="关闭设置" title="关闭设置" @click="closeSettingsDialog">
+            <X :size="16" :stroke-width="2" />
+          </button>
+        </header>
+
+        <div class="settings-content">
+          <section class="settings-section">
+            <div class="settings-section-title">
+              <h3>快捷键</h3>
+              <button type="button" class="settings-text-button" @click="resetShortcuts">恢复默认</button>
+            </div>
+            <div class="shortcut-list">
+              <button
+                v-for="action in SHORTCUT_ACTIONS"
+                :key="action"
+                type="button"
+                :class="{ capturing: shortcutCaptureAction === action }"
+                @click="startShortcutCapture(action)"
+              >
+                <span>{{ SHORTCUT_LABELS[action] }}</span>
+                <kbd>{{ shortcutCaptureAction === action ? '请按键' : formatShortcut(shortcutSettings[action]) }}</kbd>
+              </button>
+            </div>
+          </section>
+
+          <form v-if="SHOW_AI_FEATURES" class="settings-section" @submit.prevent="saveSettings">
+            <div class="settings-section-title">
+              <h3>AI 设置</h3>
+              <span>{{ settingsSaveStatus || '本地保存' }}</span>
+            </div>
+            <label class="settings-field">
+              <span>服务地址</span>
+              <input
+                v-model="aiSettings.endpoint"
+                type="url"
+                placeholder="https://api.example.com"
+              />
+            </label>
+            <label class="settings-field">
+              <span>模型</span>
+              <input v-model="aiSettings.model" type="text" placeholder="gpt-image-2" />
+            </label>
+            <div class="settings-field-grid">
+              <label class="settings-field">
+                <span>图片尺寸</span>
+                <select v-model="aiSettings.size">
+                  <option value="auto">auto</option>
+                  <option value="1024x1024">1024x1024</option>
+                  <option value="1024x1536">1024x1536</option>
+                  <option value="1536x1024">1536x1024</option>
+                  <option value="2048x2048">2048x2048</option>
+                  <option value="2048x3072">2048x3072</option>
+                  <option value="3072x2048">3072x2048</option>
+                </select>
+              </label>
+              <label class="settings-field">
+                <span>图片质量</span>
+                <select v-model="aiSettings.quality">
+                  <option value="auto">auto</option>
+                  <option value="high">high</option>
+                  <option value="medium">medium</option>
+                  <option value="low">low</option>
+                </select>
+              </label>
+            </div>
+            <label class="settings-field">
+              <span>API Key</span>
+              <input v-model="aiSettings.apiKey" type="password" placeholder="用于 AI 图片修改" />
+            </label>
+            <div class="settings-actions">
+              <span>配置会保存在本机</span>
+              <button type="submit">保存设置</button>
+            </div>
+          </form>
+        </div>
+      </section>
     </div>
 
     <div v-if="isCanvasFocusMode" class="canvas-window-drag top" aria-hidden="true"></div>

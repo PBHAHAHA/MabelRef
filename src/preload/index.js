@@ -45,6 +45,9 @@ const api = {
   files: {
     getPath: (file) => webUtils.getPathForFile(file),
     showInFolder: (filePath) => ipcRenderer.invoke('file:show-in-folder', filePath)
+  },
+  ai: {
+    editImage: (payload) => ipcRenderer.invoke('ai:edit-image', payload)
   }
 }
 

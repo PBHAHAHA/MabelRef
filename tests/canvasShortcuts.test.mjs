@@ -40,4 +40,19 @@ describe('canvas keyboard shortcuts', () => {
     assert.equal(getCanvasShortcut({ key: 's', ctrlKey: false, metaKey: false }), null)
     assert.equal(getCanvasShortcut({ key: 'x', ctrlKey: true, metaKey: false }), null)
   })
+
+  it('ignores app-level shortcuts inside the canvas', () => {
+    assert.equal(getCanvasShortcut({ key: 'b', ctrlKey: true, metaKey: false }), null)
+  })
+
+  it('uses customized shortcut settings', () => {
+    assert.equal(
+      getCanvasShortcut({ key: 'l', ctrlKey: true, metaKey: false }, { 'layer-up': 'Ctrl+L' }),
+      'layer-up'
+    )
+    assert.equal(
+      getCanvasShortcut({ key: 'ArrowUp', ctrlKey: true, metaKey: false }, { 'layer-up': 'Ctrl+L' }),
+      null
+    )
+  })
 })

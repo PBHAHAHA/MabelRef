@@ -12,6 +12,7 @@ import { createTransformHistoryRecorder } from './canvasTransformHistory.mjs'
 import { packImages } from './imagePacking.mjs'
 import { syncEditorSelectionOverlay } from './leaferEditorSelection.mjs'
 import { destroyTreeChildren } from './leaferTreeLifecycle.mjs'
+import { getSelectedImageLayout } from './selectedImageLayout.mjs'
 import { getContentBounds, getFitView } from './viewportFit.mjs'
 import {
   getAnchoredZoomView,
@@ -64,6 +65,20 @@ const bytesToObjectUrl = (bytes, mime) => {
   return URL.createObjectURL(new Blob([bytes], { type: mime }))
 }
 
+const getImageSizeFromUrl = (url) =>
+  new Promise((resolve, reject) => {
+    const image = new window.Image()
+
+    image.addEventListener('load', () => {
+      resolve({
+        width: image.naturalWidth || 1,
+        height: image.naturalHeight || 1
+      })
+    })
+    image.addEventListener('error', () => reject(new Error('Cannot load generated image')))
+    image.src = url
+  })
+
 const getImageSize = (file) =>
   new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
@@ -100,6 +115,7 @@ export function useLeaferImageEditor() {
   const selectedImage = ref(null)
   const selectedImageName = computed(() => selectedImage.value?.name || '')
   const selectedOriginalPath = computed(() => selectedImage.value?.originalPath || '')
+  const imageContextMenuRequest = ref(null)
   const imageCount = computed(() => files.value.length)
   const isGrayscaleEnabled = ref(false)
   const objectUrls = []
@@ -200,6 +216,26 @@ export function useLeaferImageEditor() {
     if (!restoringHistory) history.push(exportProject())
   }
 
+  const selectImageRecord = (imageRecord) => {
+    selectedImage.value = imageRecord
+    app.value.editor.select(imageRecord.node)
+    syncEditorSelectionOverlay(app.value.editor)
+  }
+
+  const requestImageContextMenu = (imageRecord, event) => {
+    event?.origin?.preventDefault?.()
+    event?.stop?.()
+
+    selectImageRecord(imageRecord)
+    imageContextMenuRequest.value = {
+      x: event?.origin?.clientX ?? event?.x ?? 0,
+      y: event?.origin?.clientY ?? event?.y ?? 0,
+      imageName: imageRecord.name,
+      nodeId: imageRecord.nodeId,
+      token: Date.now()
+    }
+  }
+
   const createImageRecord = ({ assetId, bytes, file, node, nodeId, originalPath }) => {
     const imageRecord = {
       assetId,
@@ -213,6 +249,9 @@ export function useLeaferImageEditor() {
 
     node.on(PointerEvent.TAP, () => {
       selectedImage.value = imageRecord
+    })
+    node.on([PointerEvent.MENU, PointerEvent.MENU_TAP], (event) => {
+      requestImageContextMenu(imageRecord, event)
     })
 
     return imageRecord
@@ -290,31 +329,97 @@ export function useLeaferImageEditor() {
     return files.value.filter((file) => selectedNodes.has(file.node))
   }
 
+  const getImageRecordAtClientPoint = (clientPoint) => {
+    if (!app.value) return null
+
+    const point = toCanvasPoint(clientPoint)
+    const rect = app.value.view.getBoundingClientRect()
+    const worldPoint = {
+      x: clientPoint.x - rect.left,
+      y: clientPoint.y - rect.top
+    }
+
+    for (let index = files.value.length - 1; index >= 0; index -= 1) {
+      const file = files.value[index]
+      const left = file.node.x || 0
+      const top = file.node.y || 0
+      const width = Math.abs((file.node.width || 1) * (file.node.scaleX ?? 1))
+      const height = Math.abs((file.node.height || 1) * (file.node.scaleY ?? 1))
+      const hitNode = typeof file.node.hit === 'function' && file.node.hit(worldPoint)
+
+      if (
+        hitNode ||
+        (point.x >= left && point.x <= left + width && point.y >= top && point.y <= top + height)
+      ) {
+        return file
+      }
+    }
+
+    return null
+  }
+
+  const selectImageAtClientPoint = (clientPoint) => {
+    const imageRecord = getImageRecordAtClientPoint(clientPoint)
+    if (!imageRecord) return null
+
+    selectImageRecord(imageRecord)
+    return {
+      name: imageRecord.name,
+      nodeId: imageRecord.nodeId
+    }
+  }
+
+  const getImageEditSource = (nodeId) => {
+    const imageRecord = files.value.find((file) => file.nodeId === nodeId)
+    if (!imageRecord) return null
+
+    return {
+      bytes: [...imageRecord.bytes],
+      mime: imageRecord.mime,
+      name: imageRecord.name,
+      nodeId: imageRecord.nodeId
+    }
+  }
+
+  const replaceImageWithBytes = async ({ nodeId, bytes, mime }) => {
+    const imageRecord = files.value.find((file) => file.nodeId === nodeId)
+    if (!imageRecord || !bytes?.length) return false
+
+    rememberCanvasState()
+    const nextBytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+    const url = bytesToObjectUrl(nextBytes, mime || imageRecord.mime)
+    const size = await getImageSizeFromUrl(url)
+    const previousArea = Math.max(1, (imageRecord.node.width || 1) * (imageRecord.node.height || 1))
+    const nextArea = Math.max(1, size.width * size.height)
+    const fitScale = Math.sqrt(previousArea / nextArea)
+
+    imageRecord.bytes = nextBytes
+    imageRecord.mime = mime || imageRecord.mime
+    imageRecord.node.url = url
+    imageRecord.node.width = size.width
+    imageRecord.node.height = size.height
+    imageRecord.node.scaleX = fitScale
+    imageRecord.node.scaleY = fitScale
+    objectUrls.push(url)
+    syncEditorSelectionOverlay(app.value.editor)
+    return true
+  }
+
   const layoutSelectedImages = () => {
     const selectedRecords = getSelectedRecords()
     if (selectedRecords.length < 2) return 0
 
-    const bounds = getContentBounds(
-      selectedRecords.map((file) => ({
-        x: file.node.x || 0,
-        y: file.node.y || 0,
-        width: file.node.width || 1,
-        height: file.node.height || 1
-      }))
-    )
-    const layout = packImages({
-      items: selectedRecords.map((file) => ({
-        width: file.node.width || 1,
-        height: file.node.height || 1
-      })),
-      viewportWidth: Math.max(bounds.width, app.value.view.getBoundingClientRect().width),
-      gap: GAP,
-      origin: 0
+    rememberCanvasState()
+    const viewportWidth = app.value.view.getBoundingClientRect().width
+    const layout = getSelectedImageLayout({
+      records: selectedRecords,
+      viewportWidth,
+      gap: GAP
     })
 
     selectedRecords.forEach((file, index) => {
-      file.node.x = bounds.x + layout[index].x
-      file.node.y = bounds.y + layout[index].y
+      file.node.x = layout[index].x
+      file.node.y = layout[index].y
     })
 
     return selectedRecords.length
@@ -723,6 +828,7 @@ export function useLeaferImageEditor() {
     destroy,
     exportProject,
     imageCount,
+    imageContextMenuRequest,
     isGrayscaleEnabled,
     layoutSelectedImages,
     loadProject,
@@ -732,6 +838,9 @@ export function useLeaferImageEditor() {
     pasteFilesAt,
     resetView: fitToContent,
     redo,
+    getImageEditSource,
+    replaceImageWithBytes,
+    selectImageAtClientPoint,
     selectedImageName,
     selectedOriginalPath,
     showSelectedInFolder: () => window.api.files.showInFolder(selectedOriginalPath.value),

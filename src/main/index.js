@@ -244,6 +244,170 @@ function registerFileActions() {
   })
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const getMediaGenerateEndpoint = (endpoint) => {
+  const normalized = String(endpoint || '').trim().replace(/\/+$/, '')
+
+  if (!normalized) return ''
+  if (normalized.endsWith('/v1/images/edits')) {
+    return `${normalized.slice(0, -'/v1/images/edits'.length)}/v1/media/generate`
+  }
+  if (normalized.endsWith('/v1/images/generations')) {
+    return `${normalized.slice(0, -'/v1/images/generations'.length)}/v1/media/generate`
+  }
+  if (normalized.endsWith('/v1/media/generate')) return normalized
+  if (normalized.endsWith('/v1')) return `${normalized}/media/generate`
+  return `${normalized}/v1/media/generate`
+}
+
+const getMediaStatusEndpoint = (generateEndpoint, taskId) => {
+  const url = new URL(generateEndpoint)
+  url.pathname = url.pathname.replace(/\/media\/generate$/, '/media/status')
+  url.searchParams.set('task_id', taskId)
+  return url.toString()
+}
+
+const parseDataUrlImage = (value) => {
+  const match = String(value || '').match(/^data:([^;]+);base64,(.+)$/)
+  if (!match) return null
+
+  return {
+    bytes: [...Buffer.from(match[2], 'base64')],
+    mime: match[1]
+  }
+}
+
+const parseBase64Image = (value, mime = 'image/png') => {
+  if (!value) return null
+
+  return {
+    bytes: [...Buffer.from(value, 'base64')],
+    mime
+  }
+}
+
+const parseImageEditResponse = async (response) => {
+  const contentType = response.headers.get('content-type') || ''
+
+  if (contentType.startsWith('image/')) {
+    return {
+      bytes: [...Buffer.from(await response.arrayBuffer())],
+      mime: contentType.split(';')[0]
+    }
+  }
+
+  const body = await response.json()
+  const firstImage =
+    body?.data?.[0] ||
+    body?.images?.[0] ||
+    body?.output?.find?.((item) => item?.b64_json || item?.image || item?.url) ||
+    body
+  const b64Json = firstImage?.b64_json || firstImage?.image || firstImage?.base64 || body?.image
+  const dataUrlImage = parseDataUrlImage(b64Json)
+  if (dataUrlImage) return dataUrlImage
+
+  const base64Image = parseBase64Image(b64Json, firstImage?.mime || body?.mime || 'image/png')
+  if (base64Image) return base64Image
+
+  const imageUrl = firstImage?.url || body?.url
+  if (imageUrl) {
+    const imageResponse = await fetch(imageUrl)
+    if (!imageResponse.ok) {
+      throw new Error(`AI 返回图片下载失败：${imageResponse.status}`)
+    }
+
+    return {
+      bytes: [...Buffer.from(await imageResponse.arrayBuffer())],
+      mime: (imageResponse.headers.get('content-type') || 'image/png').split(';')[0]
+    }
+  }
+
+  throw new Error('AI 服务没有返回可用图片')
+}
+
+const downloadImageFromUrl = async (imageUrl) => {
+  const imageResponse = await fetch(imageUrl)
+  if (!imageResponse.ok) {
+    throw new Error(`AI 返回图片下载失败：${imageResponse.status}`)
+  }
+
+  return {
+    bytes: [...Buffer.from(await imageResponse.arrayBuffer())],
+    mime: (imageResponse.headers.get('content-type') || 'image/png').split(';')[0]
+  }
+}
+
+const pollMediaTask = async ({ endpoint, taskId, headers }) => {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    await sleep(attempt === 0 ? 1200 : 3000)
+
+    const response = await fetch(getMediaStatusEndpoint(endpoint, taskId), { headers })
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '')
+      throw new Error(errorText || `AI 任务查询失败：${response.status}`)
+    }
+
+    const status = await response.json()
+    if (!status.is_final) continue
+    if (status.state === 'failed') throw new Error(status.error || 'AI 任务失败')
+    if (status.state !== 'success') throw new Error(status.error || `AI 任务状态异常：${status.state}`)
+    if (!status.result_url) throw new Error('AI 任务完成但没有返回图片地址')
+
+    return downloadImageFromUrl(status.result_url)
+  }
+
+  throw new Error('AI 任务超时，请稍后重试')
+}
+
+function registerAiActions() {
+  ipcMain.handle('ai:edit-image', async (_, { settings, image, prompt }) => {
+    const endpoint = getMediaGenerateEndpoint(settings?.endpoint || 'https://api.lk888.ai')
+    const model = String(settings?.model || 'gpt-image-2').trim()
+    const apiKey = String(settings?.apiKey || '').trim()
+    const editPrompt = String(prompt || '').trim()
+
+    if (!endpoint) throw new Error('请先在设置里填写 AI 服务地址')
+    if (!model) throw new Error('请先在设置里填写模型')
+    if (!editPrompt) throw new Error('请输入图片修改要求')
+    if (!image?.bytes?.length) throw new Error('找不到要修改的图片数据')
+
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+    }
+    const imageDataUrl = `data:${image.mime || 'image/png'};base64,${Buffer.from(image.bytes).toString('base64')}`
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        prompt: editPrompt,
+        params: {
+          images: [imageDataUrl],
+          n: 1,
+          quality: settings?.quality || 'auto',
+          response_format: 'url',
+          size: settings?.size || 'auto'
+        }
+      })
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '')
+      throw new Error(errorText || `AI 修改失败：${response.status}`)
+    }
+
+    const result = await response.clone().json().catch(() => null)
+    const directImage = result?.data?.[0]?.url || result?.result_url || result?.url
+    if (directImage) return downloadImageFromUrl(directImage)
+    if (result?.task_id) return pollMediaTask({ endpoint, taskId: result.task_id, headers })
+
+    return parseImageEditResponse(response)
+  })
+}
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 900,
@@ -265,6 +429,7 @@ function createWindow() {
   registerProjectFiles(mainWindow)
   registerMabelLibrary()
   registerFileActions()
+  registerAiActions()
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
