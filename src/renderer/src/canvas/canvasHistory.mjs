@@ -9,19 +9,32 @@ const DEFAULT_LIMIT = 80
 const cloneSnapshot = (snapshot) => structuredClone(snapshot)
 
 export function createCanvasHistory({ limit = DEFAULT_LIMIT } = {}) {
-  const stack = []
+  const undoStack = []
+  const redoStack = []
+
+  const pushBounded = (stack, snapshot) => {
+    stack.push(cloneSnapshot(snapshot))
+    if (stack.length > limit) stack.shift()
+  }
 
   return {
     clear() {
-      stack.length = 0
+      undoStack.length = 0
+      redoStack.length = 0
     },
     push(snapshot) {
       if (!snapshot) return
-      stack.push(cloneSnapshot(snapshot))
-      if (stack.length > limit) stack.shift()
+      pushBounded(undoStack, snapshot)
+      redoStack.length = 0
     },
-    undo() {
-      const snapshot = stack.pop()
+    undo(currentSnapshot) {
+      const snapshot = undoStack.pop()
+      if (snapshot && currentSnapshot) pushBounded(redoStack, currentSnapshot)
+      return snapshot ? cloneSnapshot(snapshot) : null
+    },
+    redo(currentSnapshot) {
+      const snapshot = redoStack.pop()
+      if (snapshot && currentSnapshot) pushBounded(undoStack, currentSnapshot)
       return snapshot ? cloneSnapshot(snapshot) : null
     }
   }

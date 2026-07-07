@@ -290,6 +290,17 @@ button {
   min-width: 0;
 }
 
+.library-error {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(201, 66, 66, 0.26);
+  border-radius: 6px;
+  background: rgba(201, 66, 66, 0.1);
+  color: rgba(255, 218, 218, 0.92);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .library-section-header {
   display: flex;
   justify-content: space-between;
@@ -380,6 +391,27 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.library-rename-input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  border: 1px solid rgba(111, 167, 122, 0.38);
+  border-radius: 4px;
+  outline: 0;
+  background: rgba(8, 12, 10, 0.72);
+  color: #f3faf5;
+  font: inherit;
+  font-size: inherit;
+  padding: 0 6px;
+  line-height: 22px;
+  user-select: text;
+}
+
+.library-rename-input:focus {
+  border-color: rgba(141, 230, 177, 0.62);
+  background: rgba(8, 12, 10, 0.9);
 }
 
 .library-project:hover {
@@ -691,6 +723,33 @@ button {
   border-color: rgba(129, 190, 141, 0.6);
   background: #20382a;
   color: #edf7ef;
+}
+
+.canvas-delete-selected {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 4;
+  display: inline-grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid rgba(239, 68, 68, 0.34);
+  border-radius: 0;
+  background: rgba(39, 19, 22, 0.9);
+  color: #f7b0b0;
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.canvas-delete-selected:hover {
+  border-color: rgba(248, 113, 113, 0.62);
+  background: #3a2024;
+  color: #fff1f1;
 }
 
 .viewer-panel.dragging .image-canvas {

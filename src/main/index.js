@@ -5,8 +5,8 @@
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { app, shell, BrowserWindow, ipcMain, Menu, dialog } from 'electron'
-import { basename, dirname, join } from 'path'
-import { mkdir, readFile, writeFile } from 'fs/promises'
+import { basename, dirname, extname, join } from 'path'
+import { access, mkdir, readFile, rename, writeFile } from 'fs/promises'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { createEmptyMabelProject, decodeMabelProject } from '../shared/mabelProject.mjs'
@@ -24,12 +24,29 @@ import {
   removeCategory,
   removeProjectFromCategory,
   renameCategory,
+  renameProject,
   touchRecentProject
 } from '../shared/mabelLibrary.mjs'
 import { applyCanvasFocusMode, applyWindowPinMode } from './windowFocusMode.mjs'
 
 const ensureMabelExtension = (name) =>
   name.toLowerCase().endsWith('.mabel') ? name : `${name}.mabel`
+
+const getRenamedProjectPath = (filePath, name) => {
+  const trimmed = String(name || '').trim()
+  if (!filePath || !trimmed) return ''
+
+  return join(dirname(filePath), ensureMabelExtension(basename(trimmed, extname(trimmed))))
+}
+
+const pathExists = async (filePath) => {
+  try {
+    await access(filePath)
+    return true
+  } catch {
+    return false
+  }
+}
 
 const getLibraryPath = () => join(app.getPath('userData'), 'mabel-library.json')
 
@@ -177,6 +194,33 @@ function registerMabelLibrary() {
   ipcMain.handle('library:rename-category', (_, { categoryId, name }) =>
     updateMabelLibrary((library) => renameCategory(library, categoryId, name))
   )
+  ipcMain.handle('library:rename-project', async (_, { filePath, name }) => {
+    const nextFilePath = getRenamedProjectPath(filePath, name)
+    if (!nextFilePath || nextFilePath === filePath) {
+      return {
+        library: await readMabelLibrary(),
+        project: { filePath, name: basename(filePath, '.mabel') }
+      }
+    }
+
+    if (!(await pathExists(filePath))) {
+      throw new Error('找不到原文件，请先确认这个项目文件还在原位置')
+    }
+    if (await pathExists(nextFilePath)) {
+      throw new Error('同名文件已经存在，请换一个名字')
+    }
+
+    await rename(filePath, nextFilePath)
+    const projectName = basename(nextFilePath, '.mabel')
+    const library = await updateMabelLibrary((currentLibrary) =>
+      renameProject(currentLibrary, filePath, nextFilePath, projectName)
+    )
+
+    return {
+      library,
+      project: { filePath: nextFilePath, name: projectName }
+    }
+  })
   ipcMain.handle('library:remove-category', (_, categoryId) =>
     updateMabelLibrary((library) => removeCategory(library, categoryId))
   )

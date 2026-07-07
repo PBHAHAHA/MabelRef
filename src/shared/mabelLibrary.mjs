@@ -103,6 +103,23 @@ export function renameCategory(library, categoryId, name) {
   return normalized
 }
 
+export function renameProject(library, filePath, nextFilePath, name) {
+  const normalized = normalizeLibrary(library)
+  const trimmedName = String(name || '').trim()
+  if (!filePath || !nextFilePath || !trimmedName) return normalized
+
+  const renameItem = (project) =>
+    project.path === filePath ? { ...project, path: nextFilePath, name: trimmedName } : project
+
+  normalized.recentProjects = normalized.recentProjects.map(renameItem)
+  normalized.categories = normalized.categories.map((category) => ({
+    ...category,
+    items: category.items.map(renameItem)
+  }))
+
+  return normalized
+}
+
 export function removeCategory(library, categoryId) {
   const normalized = normalizeLibrary(library)
   normalized.categories = normalized.categories.filter((category) => category.id !== categoryId)

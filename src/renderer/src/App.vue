@@ -48,6 +48,8 @@ const contextMenu = ref(null)
 const isCreatingCategory = ref(false)
 const newCategoryName = ref('')
 const newCategoryInput = ref(null)
+const editingLibraryItem = ref(null)
+const editingLibraryName = ref('')
 let projectOpenRequestId = 0
 
 const collapsedCategories = ref({})
@@ -153,7 +155,7 @@ const handleWindowPointerUp = () => {
 }
 
 const handleImageLoaded = (count) => {
-  imageCount.value += count
+  imageCount.value = Math.max(0, imageCount.value + count)
 }
 
 const handleSelectedImageChange = (name) => {
@@ -288,11 +290,69 @@ const submitCreateCategory = async () => {
   cancelCreateCategory()
 }
 
-const renameLibraryCategory = async (category) => {
-  const name = window.prompt('重命名分类', category.name)
-  if (!name?.trim()) return
+const focusLibraryEditInput = async () => {
+  await nextTick()
+  const input = document.querySelector('.library-rename-input')
+  input?.focus()
+  input?.select()
+}
 
-  library.value = await window.api.library.renameCategory(category.id, name.trim())
+const startRenameLibraryCategory = async (category) => {
+  editingLibraryItem.value = { type: 'category', key: category.id, category }
+  editingLibraryName.value = category.name
+  await focusLibraryEditInput()
+}
+
+const startRenameLibraryProject = async (project) => {
+  editingLibraryItem.value = { type: 'project', key: project.path, project }
+  editingLibraryName.value = project.name
+  await focusLibraryEditInput()
+}
+
+const isEditingLibraryCategory = (category) =>
+  editingLibraryItem.value?.type === 'category' && editingLibraryItem.value.key === category.id
+
+const isEditingLibraryProject = (project) =>
+  editingLibraryItem.value?.type === 'project' && editingLibraryItem.value.key === project.path
+
+const cancelRenameLibraryItem = () => {
+  editingLibraryItem.value = null
+  editingLibraryName.value = ''
+}
+
+const submitRenameLibraryItem = async () => {
+  const item = editingLibraryItem.value
+  const name = editingLibraryName.value.trim()
+  if (!item || !name) {
+    cancelRenameLibraryItem()
+    return
+  }
+
+  if (item.type === 'category') {
+    library.value = await window.api.library.renameCategory(item.category.id, name)
+    cancelRenameLibraryItem()
+    return
+  }
+
+  if (name === item.project.name) {
+    cancelRenameLibraryItem()
+    return
+  }
+
+  try {
+    const result = await window.api.library.renameProject(item.project.path, name)
+    library.value = result.library
+
+    if (item.project.path === activeProjectPath.value) {
+      activeProjectPath.value = result.project.filePath
+      projectName.value = result.project.name
+    }
+    projectError.value = ''
+  } catch (error) {
+    projectError.value = error.message || '文件重命名失败'
+  } finally {
+    cancelRenameLibraryItem()
+  }
 }
 
 const removeLibraryCategory = async (category) => {
@@ -362,9 +422,10 @@ const runContextAction = async (action) => {
   closeLibraryContextMenu()
   if (!menu) return
 
-  if (action === 'rename-category') await renameLibraryCategory(menu.payload.category)
+  if (action === 'rename-category') await startRenameLibraryCategory(menu.payload.category)
   if (action === 'remove-category') await removeLibraryCategory(menu.payload.category)
   if (action === 'add-current') await addCurrentProjectToCategory(menu.payload.category)
+  if (action === 'rename-project') await startRenameLibraryProject(menu.payload.project)
   if (action === 'show-project-folder') {
     await showLibraryProjectInFolder(menu.payload.project)
   }
@@ -497,28 +558,43 @@ onBeforeUnmount(() => {
         v-if="!isCanvasFocusMode && isLibraryOpen"
         class="library-sidebar"
       >
+        <p v-if="projectError" class="library-error">{{ projectError }}</p>
+
         <section class="library-section">
           <div class="library-section-header">
             <span>最近打开</span>
             <span class="section-count">{{ library.recentProjects.length }}</span>
           </div>
           <div class="library-section-items">
-            <button
+            <div
               v-for="project in library.recentProjects"
               :key="project.path"
-              type="button"
+              role="button"
+              tabindex="0"
               class="library-project"
               :class="{ active: project.path === activeProjectPath }"
               draggable="true"
               :title="project.path"
-              @click="openProjectPath(project.path)"
+              @click="!isEditingLibraryProject(project) && openProjectPath(project.path)"
+              @keydown.enter.prevent="!isEditingLibraryProject(project) && openProjectPath(project.path)"
               @dragstart="handleRecentDragStart($event, project)"
+              @contextmenu.stop="openLibraryContextMenu($event, 'project', { project })"
             >
               <span class="project-icon recent">
                 <FileImage :size="14" :stroke-width="2" />
               </span>
-              <span class="project-name">{{ project.name }}</span>
-            </button>
+              <input
+                v-if="isEditingLibraryProject(project)"
+                v-model="editingLibraryName"
+                class="library-rename-input"
+                type="text"
+                @click.stop
+                @keydown.enter.stop.prevent="submitRenameLibraryItem"
+                @keydown.esc.stop.prevent="cancelRenameLibraryItem"
+                @blur="submitRenameLibraryItem"
+              />
+              <span v-else class="project-name">{{ project.name }}</span>
+            </div>
             <p v-if="library.recentProjects.length === 0" class="library-empty">还没有保存的项目</p>
           </div>
         </section>
@@ -560,7 +636,7 @@ onBeforeUnmount(() => {
           >
             <div 
               class="library-category-header"
-              @click="toggleCategoryCollapse(category.id)"
+              @click="!isEditingLibraryCategory(category) && toggleCategoryCollapse(category.id)"
             >
               <span class="category-chevron">
                 <ChevronDown v-if="!collapsedCategories[category.id]" :size="14" />
@@ -572,21 +648,33 @@ onBeforeUnmount(() => {
               >
                 <component :is="getCategoryStyle(category.name).icon" :size="14" :stroke-width="2" />
               </span>
-              <span class="category-title">{{ category.name }}</span>
+              <input
+                v-if="isEditingLibraryCategory(category)"
+                v-model="editingLibraryName"
+                class="library-rename-input"
+                type="text"
+                @click.stop
+                @keydown.enter.stop.prevent="submitRenameLibraryItem"
+                @keydown.esc.stop.prevent="cancelRenameLibraryItem"
+                @blur="submitRenameLibraryItem"
+              />
+              <span v-else class="category-title">{{ category.name }}</span>
               <span class="category-count">{{ category.items?.length || 0 }}</span>
             </div>
 
             <!-- Nested items -->
             <div v-if="!collapsedCategories[category.id]" class="library-category-items">
-              <button
+              <div
                 v-for="project in category.items"
                 :key="`${category.id}:${project.path}`"
-                type="button"
+                role="button"
+                tabindex="0"
                 class="library-project nested"
                 :class="{ active: project.path === activeProjectPath }"
                 draggable="true"
                 :title="project.path"
-                @click="openProjectPath(project.path)"
+                @click="!isEditingLibraryProject(project) && openProjectPath(project.path)"
+                @keydown.enter.prevent="!isEditingLibraryProject(project) && openProjectPath(project.path)"
                 @dragstart="handleRecentDragStart($event, project)"
                 @contextmenu.stop="
                   openLibraryContextMenu($event, 'category-project', { category, project })
@@ -595,8 +683,18 @@ onBeforeUnmount(() => {
                 <span class="project-icon" :style="{ '--project-accent': getCategoryStyle(category.name).color }">
                   <FileImage :size="14" :stroke-width="2" />
                 </span>
-                <span class="project-name">{{ project.name }}</span>
-              </button>
+                <input
+                  v-if="isEditingLibraryProject(project)"
+                  v-model="editingLibraryName"
+                  class="library-rename-input"
+                  type="text"
+                  @click.stop
+                  @keydown.enter.stop.prevent="submitRenameLibraryItem"
+                  @keydown.esc.stop.prevent="cancelRenameLibraryItem"
+                  @blur="submitRenameLibraryItem"
+                />
+                <span v-else class="project-name">{{ project.name }}</span>
+              </div>
             </div>
           </div>
           <p v-if="library.categories.length === 0" class="library-empty">右键或点加号新建分类</p>
@@ -643,7 +741,14 @@ onBeforeUnmount(() => {
         删除分类
       </button>
       <button
-        v-if="contextMenu.type === 'category-project'"
+        v-if="contextMenu.type === 'project' || contextMenu.type === 'category-project'"
+        type="button"
+        @click="runContextAction('rename-project')"
+      >
+        重命名文件
+      </button>
+      <button
+        v-if="contextMenu.type === 'project' || contextMenu.type === 'category-project'"
         type="button"
         @click="runContextAction('show-project-folder')"
       >

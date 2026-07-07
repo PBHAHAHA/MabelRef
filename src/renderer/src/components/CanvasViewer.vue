@@ -6,7 +6,7 @@
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Maximize } from 'lucide-vue-next'
+import { Maximize, Trash2 } from 'lucide-vue-next'
 import logoUrl from '../assets/logo1.png'
 import { getCanvasShortcut } from '../canvas/canvasShortcuts.mjs'
 import { getDroppedMabelProjectPath, getImageFiles } from '../canvas/canvasImportFiles.mjs'
@@ -130,7 +130,33 @@ const handleKeydown = (event) => {
     return
   }
 
+  if (shortcut === 'redo') {
+    editor.redo()
+    return
+  }
+
+  if (shortcut === 'delete') {
+    const deletedCount = editor.deleteSelectedImages()
+    if (deletedCount > 0) emit('image-loaded', -deletedCount)
+    return
+  }
+
+  if (shortcut === 'layer-up') {
+    editor.moveSelectedImagesLayer(1)
+    return
+  }
+
+  if (shortcut === 'layer-down') {
+    editor.moveSelectedImagesLayer(-1)
+    return
+  }
+
   editor.layoutSelectedImages()
+}
+
+const deleteSelectedImages = () => {
+  const deletedCount = editor.deleteSelectedImages()
+  if (deletedCount > 0) emit('image-loaded', -deletedCount)
 }
 
 const showSelectedInFolder = async () => {
@@ -225,6 +251,17 @@ onBeforeUnmount(() => {
         <span v-if="statusText" class="project-status">{{ statusText }}</span>
       </div>
     </div>
+
+    <button
+      v-if="!focusMode && editor.selectedImageName.value"
+      type="button"
+      class="canvas-delete-selected"
+      title="删除选中图片"
+      aria-label="删除选中图片"
+      @click="deleteSelectedImages"
+    >
+      <Trash2 :size="16" :stroke-width="2" />
+    </button>
 
     <div
       ref="editorHost"

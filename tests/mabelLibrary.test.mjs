@@ -5,6 +5,7 @@ import {
   addProjectToCategory,
   createEmptyLibrary,
   removeProjectFromCategory,
+  renameProject,
   touchRecentProject
 } from '../src/shared/mabelLibrary.mjs'
 
@@ -52,5 +53,19 @@ describe('mabel library', () => {
       library.categories.map((category) => category.items.map((item) => item.path)),
       [[], ['/tmp/demo.mabel']]
     )
+  })
+
+  it('renames a project across recent and category references', () => {
+    let library = addCategory(createEmptyLibrary(), 'refs')
+    const categoryId = library.categories[0].id
+
+    library = touchRecentProject(library, '/tmp/demo.mabel', 'demo')
+    library = addProjectToCategory(library, categoryId, '/tmp/demo.mabel', 'demo')
+    library = renameProject(library, '/tmp/demo.mabel', '/tmp/renamed.mabel', 'renamed')
+
+    assert.equal(library.recentProjects[0].path, '/tmp/renamed.mabel')
+    assert.equal(library.recentProjects[0].name, 'renamed')
+    assert.equal(library.categories[0].items[0].path, '/tmp/renamed.mabel')
+    assert.equal(library.categories[0].items[0].name, 'renamed')
   })
 })

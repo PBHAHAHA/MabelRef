@@ -33,6 +33,8 @@ const api = {
     addCategory: (name) => ipcRenderer.invoke('library:add-category', name),
     renameCategory: (categoryId, name) =>
       ipcRenderer.invoke('library:rename-category', { categoryId, name }),
+    renameProject: (filePath, name) =>
+      ipcRenderer.invoke('library:rename-project', { filePath, name }),
     removeCategory: (categoryId) => ipcRenderer.invoke('library:remove-category', categoryId),
     addProjectToCategory: (categoryId, project) =>
       ipcRenderer.invoke('library:add-project-to-category', { categoryId, ...project }),

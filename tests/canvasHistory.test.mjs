@@ -34,4 +34,25 @@ describe('canvas history', () => {
 
     assert.equal(history.undo(), null)
   })
+
+  it('redoes the last undone snapshot', () => {
+    const history = createCanvasHistory()
+    const before = { nodes: [{ id: 'a' }] }
+    const after = { nodes: [] }
+
+    history.push(before)
+
+    assert.deepEqual(history.undo(after), before)
+    assert.deepEqual(history.redo(before), after)
+  })
+
+  it('clears redo snapshots after a new edit', () => {
+    const history = createCanvasHistory()
+
+    history.push({ nodes: [{ id: 'a' }] })
+    history.undo({ nodes: [] })
+    history.push({ nodes: [{ id: 'b' }] })
+
+    assert.equal(history.redo({ nodes: [{ id: 'b' }] }), null)
+  })
 })

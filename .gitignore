@@ -1,4 +1,6 @@
 node_modules
+.electron-cache
+.npm-cache
 dist
 out
 .DS_Store

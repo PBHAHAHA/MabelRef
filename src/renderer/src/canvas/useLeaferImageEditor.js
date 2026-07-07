@@ -218,12 +218,52 @@ export function useLeaferImageEditor() {
     return imageRecord
   }
 
+  const createImageNode = ({ nodeId, source, projectNode }) =>
+    new Image({
+      id: nodeId,
+      url: source.url,
+      x: projectNode.x,
+      y: projectNode.y,
+      width: projectNode.width,
+      height: projectNode.height,
+      scaleX: projectNode.scaleX ?? 1,
+      scaleY: projectNode.scaleY ?? 1,
+      rotation: projectNode.rotation,
+      skewX: projectNode.skewX || 0,
+      skewY: projectNode.skewY || 0,
+      grayscale: projectNode.grayscale || 0,
+      opacity: projectNode.opacity,
+      visible: projectNode.visible,
+      locked: projectNode.locked,
+      draggable: !projectNode.locked,
+      editable: !projectNode.locked
+    })
+
+  const applyImageNodeSnapshot = (node, projectNode) => {
+    node.x = projectNode.x
+    node.y = projectNode.y
+    node.width = projectNode.width
+    node.height = projectNode.height
+    node.scaleX = projectNode.scaleX ?? 1
+    node.scaleY = projectNode.scaleY ?? 1
+    node.rotation = projectNode.rotation
+    node.skewX = projectNode.skewX || 0
+    node.skewY = projectNode.skewY || 0
+    node.grayscale = projectNode.grayscale || 0
+    node.opacity = projectNode.opacity
+    node.visible = projectNode.visible
+    node.locked = projectNode.locked
+    node.draggable = !projectNode.locked
+    node.editable = !projectNode.locked
+  }
+
   const mount = (view) => {
     app.value = new App({
       view,
       ...getManualWheelZoomInteractionConfig(),
       editor: {
         boxSelect: true,
+        hover: false,
         multipleSelect: true
       }
     })
@@ -278,6 +318,63 @@ export function useLeaferImageEditor() {
     })
 
     return selectedRecords.length
+  }
+
+  const deleteSelectedImages = () => {
+    const selectedRecords = getSelectedRecords()
+    if (selectedRecords.length === 0) return 0
+
+    rememberCanvasState()
+    const selectedNodes = new Set(selectedRecords.map((file) => file.node))
+
+    selectedRecords.forEach((file) => {
+      app.value.tree.remove(file.node, true)
+    })
+    files.value = files.value.filter((file) => !selectedNodes.has(file.node))
+    selectedImage.value = null
+    syncEditorSelectionOverlay(app.value.editor)
+
+    return selectedRecords.length
+  }
+
+  const moveSelectedImagesLayer = (direction) => {
+    const selectedNodes = new Set(app.value?.editor?.list || [])
+    if (selectedNodes.size === 0) return 0
+
+    const currentFiles = [...files.value]
+    let movedCount = 0
+
+    if (direction > 0) {
+      for (let index = currentFiles.length - 2; index >= 0; index -= 1) {
+        const currentIsSelected = selectedNodes.has(currentFiles[index].node)
+        const nextIsSelected = selectedNodes.has(currentFiles[index + 1].node)
+
+        if (currentIsSelected && !nextIsSelected) {
+          ;[currentFiles[index], currentFiles[index + 1]] = [currentFiles[index + 1], currentFiles[index]]
+          movedCount += 1
+        }
+      }
+    } else {
+      for (let index = 1; index < currentFiles.length; index += 1) {
+        const currentIsSelected = selectedNodes.has(currentFiles[index].node)
+        const previousIsSelected = selectedNodes.has(currentFiles[index - 1].node)
+
+        if (currentIsSelected && !previousIsSelected) {
+          ;[currentFiles[index], currentFiles[index - 1]] = [currentFiles[index - 1], currentFiles[index]]
+          movedCount += 1
+        }
+      }
+    }
+
+    if (movedCount === 0) return 0
+
+    rememberCanvasState()
+    files.value = currentFiles
+    currentFiles.forEach((file) => {
+      app.value.tree.add(file.node)
+    })
+    syncEditorSelectionOverlay(app.value.editor)
+    return movedCount
   }
 
   const addFiles = async (imageFiles) => {
@@ -473,24 +570,10 @@ export function useLeaferImageEditor() {
 
         const bytes = asset.bytes || base64ToBytes(asset.data)
         const url = bytesToObjectUrl(bytes, asset.mime)
-        const node = new Image({
-          id: projectNode.id,
-          url,
-          x: projectNode.x,
-          y: projectNode.y,
-          width: projectNode.width,
-          height: projectNode.height,
-          scaleX: projectNode.scaleX ?? 1,
-          scaleY: projectNode.scaleY ?? 1,
-          rotation: projectNode.rotation,
-          skewX: projectNode.skewX || 0,
-          skewY: projectNode.skewY || 0,
-          grayscale: projectNode.grayscale || 0,
-          opacity: projectNode.opacity,
-          visible: projectNode.visible,
-          locked: projectNode.locked,
-          draggable: !projectNode.locked,
-          editable: !projectNode.locked
+        const node = createImageNode({
+          nodeId: projectNode.id,
+          source: { url },
+          projectNode
         })
         const imageRecord = createImageRecord({
           assetId: asset.id,
@@ -522,13 +605,96 @@ export function useLeaferImageEditor() {
     }
   }
 
+  const restoreProjectSnapshot = (project) => {
+    const previousView = {
+      zoom: zoom.value,
+      position: {
+        x: app.value.tree?.x || 0,
+        y: app.value.tree?.y || 0
+      }
+    }
+    const assetMap = new Map(project.assets.map((asset) => [asset.id, asset]))
+    const recordMap = new Map(files.value.map((file) => [file.nodeId, file]))
+    const nextNodeIds = new Set(project.nodes.map((projectNode) => projectNode.id))
+    const nextFiles = []
+
+    files.value.forEach((file) => {
+      if (!nextNodeIds.has(file.nodeId)) {
+        app.value.tree.remove(file.node, true)
+      }
+    })
+
+    project.nodes
+      .filter((projectNode) => projectNode.type === 'image')
+      .forEach((projectNode) => {
+        const asset = assetMap.get(projectNode.assetId)
+        if (!asset) return
+
+        const existingRecord = recordMap.get(projectNode.id)
+        if (existingRecord) {
+          applyImageNodeSnapshot(existingRecord.node, projectNode)
+          nextFiles.push({
+            ...existingRecord,
+            assetId: asset.id,
+            bytes: asset.bytes || base64ToBytes(asset.data),
+            mime: asset.mime,
+            name: asset.name,
+            originalPath: asset.originalPath || ''
+          })
+          return
+        }
+
+        const bytes = asset.bytes || base64ToBytes(asset.data)
+        const url = bytesToObjectUrl(bytes, asset.mime)
+        const node = createImageNode({
+          nodeId: projectNode.id,
+          source: { url },
+          projectNode
+        })
+        const imageRecord = createImageRecord({
+          assetId: asset.id,
+          bytes,
+          file: { name: asset.name, type: asset.mime },
+          node,
+          nodeId: projectNode.id,
+          originalPath: asset.originalPath || ''
+        })
+
+        app.value.tree.add(node)
+        objectUrls.push(url)
+        nextFiles.push(imageRecord)
+      })
+
+    files.value = nextFiles
+    nextFiles.forEach((file) => {
+      app.value.tree.add(file.node)
+    })
+    selectedImage.value = null
+    isGrayscaleEnabled.value =
+      nextFiles.length > 0 && nextFiles.every((file) => Boolean(file.node.grayscale))
+    applyView({ nextZoom: previousView.zoom, position: previousView.position })
+  }
+
   const undo = async () => {
-    const snapshot = history.undo()
+    const snapshot = history.undo(exportProject())
     if (!snapshot) return false
 
     restoringHistory = true
     try {
-      await loadProject(snapshot, () => {}, { resetHistory: false, fitView: false })
+      restoreProjectSnapshot(snapshot)
+    } finally {
+      restoringHistory = false
+    }
+    return true
+  }
+
+  const redo = async () => {
+    const snapshot = history.redo(exportProject())
+    if (!snapshot) return false
+
+    restoringHistory = true
+    try {
+      restoreProjectSnapshot(snapshot)
     } finally {
       restoringHistory = false
     }
@@ -553,6 +719,7 @@ export function useLeaferImageEditor() {
 
   return {
     addFiles,
+    deleteSelectedImages,
     destroy,
     exportProject,
     imageCount,
@@ -560,9 +727,11 @@ export function useLeaferImageEditor() {
     layoutSelectedImages,
     loadProject,
     mount,
+    moveSelectedImagesLayer,
     panByWheelDelta,
     pasteFilesAt,
     resetView: fitToContent,
+    redo,
     selectedImageName,
     selectedOriginalPath,
     showSelectedInFolder: () => window.api.files.showInFolder(selectedOriginalPath.value),
