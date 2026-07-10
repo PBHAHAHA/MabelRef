@@ -1,22 +1,40 @@
-# MabelRef - Electron Vue desktop shell
+# MabelRef Agent Notes
 
-Electron + electron-vite + Vue 3 + electron-builder
-Canvas editor: leafer-editor
-Icons: lucide-vue-next
+MabelRef is an Electron Vue desktop application for visual reference boards.
 
-<directory>
-src/ - 应用代码 (3子目录: main, preload, renderer)
-build/ - 打包图标与 macOS 权限资源
-resources/ - 运行时静态资源
-out/ - electron-vite 构建产物
-</directory>
+## Stack
 
-<config>
-package.json - npm 脚本、Electron/Vue 依赖与打包入口
-electron.vite.config.mjs - main/preload/renderer 三端 Vite 配置
-electron-builder.yml - electron-builder 平台打包规则
-eslint.config.mjs - Vue/Electron 项目 lint 规则
-AGENT.md - GEB 分形文档系统与协作协议
-</config>
+- Electron
+- electron-vite
+- Vue 3
+- electron-builder
+- Leafer Editor
+- lucide-vue-next
 
-法则: 极简·稳定·导航·版本精确
+## Repository Layout
+
+```text
+src/        application code
+build/      packaging icons and platform resources
+resources/  runtime static assets
+docs/       release and maintainer documentation
+out/        electron-vite build output
+dist/       packaged application output
+tests/      Node test suite
+```
+
+## Important Config
+
+- `package.json`: scripts, dependencies, and Electron entry point
+- `electron.vite.config.mjs`: main, preload, and renderer Vite config
+- `electron-builder.yml`: packaging rules
+- `eslint.config.mjs`: lint rules
+- `AGENT.md`: collaboration guide for coding agents
+
+## Rules
+
+- Keep changes small and reviewable.
+- Preserve Electron main/preload/renderer boundaries.
+- Do not commit secrets, certificates, private keys, `.env` files, `out/`, or `dist/`.
+- Update public Markdown files when release, signing, setup, or contributor behavior changes.
+- Prefer `rg` for repository searches.

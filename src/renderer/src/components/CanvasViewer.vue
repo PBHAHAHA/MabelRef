@@ -1,20 +1,27 @@
 <script setup>
 /**
- * [INPUT]: 依赖 useLeaferImageEditor、clipboardImages、focusMode prop 与用户拖入/粘贴/浏览选择的本地图片 File 或 .mabel File
- * [OUTPUT]: 对外提供基于 Leafer Editor 的多图片画布查看器、首次打开拖拽导入/打开项目引导、专注模式画布、按鼠标位置粘贴图片、选中图片快捷排版、原始路径定位、加载保存状态与项目快照读写能力
+ * [INPUT]: 依赖 useLeaferImageEditor、clipboardImages、directoryEntries、focusMode prop 与用户拖入/粘贴的本地图片 File、图片文件夹或 .mabel File
+ * [OUTPUT]: 对外提供基于 Leafer Editor 的多图片画布查看器、拖拽导入文件/文件夹/打开项目引导、专注模式画布、按鼠标位置粘贴图片、选中图片快捷排版、原始路径定位、加载保存状态与项目快照读写能力
  * [POS]: renderer/components 的核心画布容器，被 App.vue 消费
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { FileUp, Maximize, Sparkles, X } from 'lucide-vue-next'
+import { FolderUp, Maximize, Sparkles, X } from 'lucide-vue-next'
 import logoUrl from '../assets/logo1.png'
 import { getCanvasShortcut } from '../canvas/canvasShortcuts.mjs'
 import { getDroppedMabelProjectPath, getImageFiles } from '../canvas/canvasImportFiles.mjs'
 import { getClipboardImageFiles } from '../canvas/clipboardImages.mjs'
+import { collectDroppedFiles } from '../canvas/directoryEntries.mjs'
 import { getWheelZoomFactor } from '../canvas/viewportZoom.mjs'
 import { useLeaferImageEditor } from '../canvas/useLeaferImageEditor'
 
-const emit = defineEmits(['image-loaded', 'open-project-file', 'save-project', 'selected-image-change'])
+const emit = defineEmits([
+  'image-loaded',
+  'open-project-file',
+  'save-project',
+  'selected-image-change',
+  'set-workspace'
+])
 
 const props = defineProps({
   focusMode: {
@@ -24,11 +31,14 @@ const props = defineProps({
   shortcuts: {
     type: Object,
     default: () => ({})
+  },
+  hasWorkspace: {
+    type: Boolean,
+    default: false
   }
 })
 
 const editorHost = ref(null)
-const fileInput = ref(null)
 const isDragging = ref(false)
 const lastPointer = ref(null)
 const saveProgress = ref(null)
@@ -55,26 +65,18 @@ const importFiles = async (files) => {
 const handleDrop = async (event) => {
   event.preventDefault()
   isDragging.value = false
-  const droppedFiles = [...event.dataTransfer.files]
-  const projectPath = getDroppedMabelProjectPath(droppedFiles, window.api.files.getPath)
+  const projectPath = getDroppedMabelProjectPath(
+    [...event.dataTransfer.files],
+    window.api.files.getPath
+  )
 
   if (projectPath) {
     emit('open-project-file', projectPath)
     return
   }
 
+  const droppedFiles = await collectDroppedFiles(event.dataTransfer)
   await importFiles(getImageFiles(droppedFiles))
-}
-
-const browseFiles = () => {
-  fileInput.value?.click()
-}
-
-const handleFileInput = async (event) => {
-  const files = getImageFiles([...event.target.files])
-
-  event.target.value = ''
-  await importFiles(files)
 }
 
 const handlePaste = async (event) => {
@@ -427,20 +429,17 @@ onBeforeUnmount(() => {
     </button>
     <div v-if="!focusMode && editor.imageCount.value === 0" class="canvas-empty-import">
       <img class="empty-import-logo" :src="logoUrl" alt="" aria-hidden="true" />
-      <p>拖入图片或 MabelRef 项目</p>
-      <span>支持 JPG、PNG、WEBP 等常见图片格式，也支持 .mabel 项目文件</span>
-      <button type="button" @click="browseFiles">
-        <FileUp class="empty-import-button-icon" :size="15" :stroke-width="2" />
-        <span>打开文件</span>
+      <p>拖入图片、文件夹或 MabelRef 项目</p>
+      <span>支持 JPG、PNG、WEBP 等常见图片格式，也支持包含图片的文件夹和 .mabel 项目文件</span>
+      <button
+        v-if="!hasWorkspace"
+        type="button"
+        class="canvas-workspace-button"
+        @click="emit('set-workspace')"
+      >
+        <FolderUp class="empty-import-button-icon" :size="15" :stroke-width="2" />
+        <span>设置工作空间</span>
       </button>
     </div>
-    <input
-      ref="fileInput"
-      class="canvas-file-input"
-      type="file"
-      accept="image/*"
-      multiple
-      @change="handleFileInput"
-    />
   </section>
 </template>

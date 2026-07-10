@@ -3,7 +3,7 @@
 > L2 | 父级: /src/CLAUDE.md
 
 成员清单
-index.js: Electron 主进程入口，使用 BrowserWindow frame:false 隐藏系统标题栏，移除原生菜单，ipcMain 暴露窗口控制、画布专注模式、文件定位与 .mabel 项目文件保存/打开
+index.js: Electron 主进程入口，使用 BrowserWindow frame:false 隐藏系统标题栏，移除原生菜单，ipcMain 暴露窗口控制、画布专注模式、工作空间扫描/分类文件夹、文件定位与 .mabel 项目文件保存/打开
 windowFocusMode.mjs: 窗口层级工具，封装画布专注模式的 alwaysOnTop 与跨工作区可见设置
 
 法则: 成员完整·一行一文件·父级链接·技术词前置

@@ -30,6 +30,7 @@ const api = {
   },
   library: {
     get: () => ipcRenderer.invoke('library:get'),
+    setWorkspace: () => ipcRenderer.invoke('library:set-workspace'),
     addCategory: (name) => ipcRenderer.invoke('library:add-category', name),
     renameCategory: (categoryId, name) =>
       ipcRenderer.invoke('library:rename-category', { categoryId, name }),
@@ -39,8 +40,7 @@ const api = {
     addProjectToCategory: (categoryId, project) =>
       ipcRenderer.invoke('library:add-project-to-category', { categoryId, ...project }),
     removeProjectFromCategory: (categoryId, filePath) =>
-      ipcRenderer.invoke('library:remove-project-from-category', { categoryId, filePath }),
-    touchRecentProject: (project) => ipcRenderer.invoke('library:touch-recent-project', project)
+      ipcRenderer.invoke('library:remove-project-from-category', { categoryId, filePath })
   },
   files: {
     getPath: (file) => webUtils.getPathForFile(file),

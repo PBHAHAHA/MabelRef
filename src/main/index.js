@@ -1,14 +1,14 @@
 /**
- * [INPUT]: 依赖 electron 的 app/BrowserWindow/ipcMain/shell/dialog、mabelPackage、windowFocusMode 与 fs/path 管理桌面窗口、项目文件对话框、文件定位和系统事件
- * [OUTPUT]: 创建无边框主窗口并提供窗口控制/画布专注模式 IPC、文件定位 IPC 与 .mabel 项目文件保存/打开 IPC
+ * [INPUT]: 依赖 electron 的 app/BrowserWindow/ipcMain/shell/dialog、mabelPackage、windowFocusMode、resources/logo.png 与 fs/path 管理桌面窗口、工作空间、项目文件对话框、文件定位和系统事件
+ * [OUTPUT]: 创建无边框主窗口并提供窗口控制/画布专注模式 IPC、工作空间分类文件夹、文件定位 IPC 与 .mabel 项目文件保存/打开 IPC
  * [POS]: main 进程入口，负责应用生命周期、窗口壳与 renderer 加载
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { app, shell, BrowserWindow, ipcMain, Menu, dialog } from 'electron'
 import { basename, dirname, extname, join } from 'path'
-import { access, mkdir, readFile, rename, writeFile } from 'fs/promises'
+import { access, mkdir, readFile, readdir, rename, rm, writeFile } from 'fs/promises'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import icon from '../../resources/icon.png?asset'
+import icon from '../../resources/logo.png?asset'
 import { createEmptyMabelProject, decodeMabelProject } from '../shared/mabelProject.mjs'
 import {
   decodeMabelPackage,
@@ -25,7 +25,7 @@ import {
   removeProjectFromCategory,
   renameCategory,
   renameProject,
-  touchRecentProject
+  setCategoryFolderPath
 } from '../shared/mabelLibrary.mjs'
 import { applyCanvasFocusMode, applyWindowPinMode } from './windowFocusMode.mjs'
 
@@ -37,6 +37,78 @@ const getRenamedProjectPath = (filePath, name) => {
   if (!filePath || !trimmed) return ''
 
   return join(dirname(filePath), ensureMabelExtension(basename(trimmed, extname(trimmed))))
+}
+
+const sanitizePathName = (name, fallback = '未命名') => {
+  const normalized = String(name || fallback)
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .trim()
+
+  return normalized || fallback
+}
+
+const getAvailableFilePath = async (directory, fileName) => {
+  const extension = extname(fileName)
+  const baseName = basename(fileName, extension)
+  let candidate = join(directory, fileName)
+  let index = 1
+
+  while (await pathExists(candidate)) {
+    candidate = join(directory, `${baseName}-${index}${extension}`)
+    index += 1
+  }
+
+  return candidate
+}
+
+const getWorkspaceCategoryPath = (library, categoryName) => {
+  if (!library.workspacePath) return ''
+  return join(library.workspacePath, sanitizePathName(categoryName, '未命名分类'))
+}
+
+const createCategoryIdFromPath = (folderPath) => `cat-${Buffer.from(folderPath).toString('hex')}`
+
+const getMabelProjectItem = (filePath) => ({
+  path: filePath,
+  name: basename(filePath, '.mabel'),
+  lastOpenedAt: 0
+})
+
+async function scanWorkspaceLibrary(workspacePath) {
+  await mkdir(workspacePath, { recursive: true })
+
+  const entries = await readdir(workspacePath, { withFileTypes: true })
+  const rootProjects = entries
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.mabel'))
+    .map((entry) => getMabelProjectItem(join(workspacePath, entry.name)))
+    .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'))
+  const categories = []
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    if (entry.name.startsWith('.')) continue
+
+    const folderPath = join(workspacePath, entry.name)
+    const files = await readdir(folderPath, { withFileTypes: true })
+    const items = files
+      .filter((file) => file.isFile() && file.name.toLowerCase().endsWith('.mabel'))
+      .map((file) => getMabelProjectItem(join(folderPath, file.name)))
+      .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'))
+
+    categories.push({
+      id: createCategoryIdFromPath(folderPath),
+      name: entry.name,
+      folderPath,
+      items
+    })
+  }
+
+  return {
+    version: 1,
+    workspacePath,
+    rootProjects,
+    categories: categories.sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'))
+  }
 }
 
 const pathExists = async (filePath) => {
@@ -65,8 +137,16 @@ async function writeMabelLibrary(library) {
   return normalized
 }
 
+async function readSyncedMabelLibrary() {
+  const library = await readMabelLibrary()
+  if (!library.workspacePath) return library
+  if (!(await pathExists(library.workspacePath))) return library
+
+  return writeMabelLibrary(await scanWorkspaceLibrary(library.workspacePath))
+}
+
 async function updateMabelLibrary(updater) {
-  return writeMabelLibrary(updater(await readMabelLibrary()))
+  return writeMabelLibrary(await updater(await readMabelLibrary()))
 }
 
 function registerWindowControls(window) {
@@ -121,10 +201,6 @@ function registerProjectFiles(window) {
     }
 
     const filePath = result.filePaths[0]
-    await updateMabelLibrary((library) =>
-      touchRecentProject(library, filePath, basename(filePath, '.mabel'))
-    )
-
     return {
       canceled: false,
       filePath,
@@ -136,10 +212,6 @@ function registerProjectFiles(window) {
   ipcMain.handle('project:open-path', async (_, filePath) => {
     if (!filePath) return { canceled: true }
 
-    await updateMabelLibrary((library) =>
-      touchRecentProject(library, filePath, basename(filePath, '.mabel'))
-    )
-
     return {
       canceled: false,
       filePath,
@@ -148,24 +220,45 @@ function registerProjectFiles(window) {
     }
   })
 
-  ipcMain.handle('project:save', async (event, { filePath, project, requestId }) => {
+  ipcMain.handle('project:save', async (event, { filePath, project, requestId, categoryId, fileName }) => {
     let targetPath = filePath
+    let previousPath = ''
+    const library = await readMabelLibrary()
+    const category = library.categories.find((item) => item.id === categoryId)
 
-    if (!targetPath) {
-      const result = await dialog.showSaveDialog(window, {
-        title: '保存 MabelRef 项目',
-        defaultPath: join(app.getPath('documents'), '未命名.mabel'),
-        filters: [{ name: 'MabelRef Project', extensions: ['mabel'] }]
-      })
-
-      if (result.canceled || !result.filePath) {
-        return { canceled: true }
+    if (category?.folderPath) {
+      await mkdir(category.folderPath, { recursive: true })
+      const currentName = basename(filePath || sanitizePathName(fileName, '未命名'))
+      targetPath = join(category.folderPath, ensureMabelExtension(currentName))
+      if (filePath && dirname(filePath) !== category.folderPath) {
+        previousPath = filePath
       }
+    } else if (!targetPath) {
 
-      targetPath = result.filePath
+      if (library.workspacePath) {
+        targetPath = join(
+          library.workspacePath,
+          ensureMabelExtension(sanitizePathName(fileName, '未命名'))
+        )
+      } else {
+        const result = await dialog.showSaveDialog(window, {
+          title: '保存 MabelRef 项目',
+          defaultPath: join(app.getPath('documents'), '未命名.mabel'),
+          filters: [{ name: 'MabelRef Project', extensions: ['mabel'] }]
+        })
+
+        if (result.canceled || !result.filePath) {
+          return { canceled: true }
+        }
+
+        targetPath = result.filePath
+      }
     }
 
     targetPath = ensureMabelExtension(targetPath)
+    if (targetPath !== filePath && (await pathExists(targetPath))) {
+      targetPath = await getAvailableFilePath(dirname(targetPath), basename(targetPath))
+    }
     await mkdir(dirname(targetPath), { recursive: true })
 
     const sendProgress = (progress) => {
@@ -174,9 +267,13 @@ function registerProjectFiles(window) {
     }
 
     await writeMabelPackage(targetPath, project, sendProgress)
-    await updateMabelLibrary((library) =>
-      touchRecentProject(library, targetPath, basename(targetPath, '.mabel'))
-    )
+    if (previousPath && previousPath !== targetPath && (await pathExists(previousPath))) {
+      await rm(previousPath)
+    }
+    const savedLibrary = await readMabelLibrary()
+    if (savedLibrary.workspacePath) {
+      await writeMabelLibrary(await scanWorkspaceLibrary(savedLibrary.workspacePath))
+    }
 
     return {
       canceled: false,
@@ -187,12 +284,46 @@ function registerProjectFiles(window) {
 }
 
 function registerMabelLibrary() {
-  ipcMain.handle('library:get', () => readMabelLibrary())
-  ipcMain.handle('library:add-category', (_, name) =>
-    updateMabelLibrary((library) => addCategory(library, name))
+  ipcMain.handle('library:get', () => readSyncedMabelLibrary())
+  ipcMain.handle('library:set-workspace', async () => {
+    const result = await dialog.showOpenDialog({
+      title: '选择 MabelRef 工作空间',
+      properties: ['openDirectory', 'createDirectory']
+    })
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return readMabelLibrary()
+    }
+
+    return writeMabelLibrary(await scanWorkspaceLibrary(result.filePaths[0]))
+  })
+  ipcMain.handle('library:add-category', async (_, name) =>
+    updateMabelLibrary(async (library) => {
+      let nextLibrary = addCategory(library, name)
+      const category = nextLibrary.categories.at(-1)
+
+      if (category && nextLibrary.workspacePath) {
+        const folderPath = getWorkspaceCategoryPath(nextLibrary, category.name)
+        await mkdir(folderPath, { recursive: true })
+        nextLibrary = setCategoryFolderPath(nextLibrary, category.id, folderPath)
+      }
+
+      return nextLibrary
+    }).then((library) => (library.workspacePath ? readSyncedMabelLibrary() : library))
   )
-  ipcMain.handle('library:rename-category', (_, { categoryId, name }) =>
-    updateMabelLibrary((library) => renameCategory(library, categoryId, name))
+  ipcMain.handle('library:rename-category', async (_, { categoryId, name }) =>
+    updateMabelLibrary(async (library) => {
+      let nextLibrary = renameCategory(library, categoryId, name)
+      const category = nextLibrary.categories.find((item) => item.id === categoryId)
+
+      if (category && nextLibrary.workspacePath) {
+        const folderPath = getWorkspaceCategoryPath(nextLibrary, category.name)
+        await mkdir(folderPath, { recursive: true })
+        nextLibrary = setCategoryFolderPath(nextLibrary, categoryId, folderPath)
+      }
+
+      return nextLibrary
+    }).then((library) => (library.workspacePath ? readSyncedMabelLibrary() : library))
   )
   ipcMain.handle('library:rename-project', async (_, { filePath, name }) => {
     const nextFilePath = getRenamedProjectPath(filePath, name)
@@ -212,9 +343,10 @@ function registerMabelLibrary() {
 
     await rename(filePath, nextFilePath)
     const projectName = basename(nextFilePath, '.mabel')
-    const library = await updateMabelLibrary((currentLibrary) =>
+    await updateMabelLibrary((currentLibrary) =>
       renameProject(currentLibrary, filePath, nextFilePath, projectName)
     )
+    const library = await readSyncedMabelLibrary()
 
     return {
       library,
@@ -224,14 +356,55 @@ function registerMabelLibrary() {
   ipcMain.handle('library:remove-category', (_, categoryId) =>
     updateMabelLibrary((library) => removeCategory(library, categoryId))
   )
-  ipcMain.handle('library:add-project-to-category', (_, { categoryId, filePath, name }) =>
-    updateMabelLibrary((library) => addProjectToCategory(library, categoryId, filePath, name))
-  )
+  ipcMain.handle('library:add-project-to-category', async (_, { categoryId, filePath, name }) => {
+    if (!filePath) return { library: await readMabelLibrary(), project: null }
+
+    return updateMabelLibrary(async (library) => {
+      const normalized = normalizeLibrary(library)
+      const category = normalized.categories.find((item) => item.id === categoryId)
+      let nextFilePath = filePath
+      let projectName = name || basename(filePath, '.mabel')
+
+      if (category?.folderPath) {
+        if (!(await pathExists(filePath))) {
+          throw new Error('找不到原文件，请先确认这个项目文件还在原位置')
+        }
+
+        await mkdir(category.folderPath, { recursive: true })
+        const targetDirectory = category.folderPath
+        const currentDirectory = dirname(filePath)
+        const targetName = ensureMabelExtension(basename(filePath))
+
+        if (currentDirectory !== targetDirectory) {
+          nextFilePath = await getAvailableFilePath(targetDirectory, targetName)
+          await rename(filePath, nextFilePath)
+          projectName = basename(nextFilePath, '.mabel')
+        }
+      }
+
+      const renamedLibrary =
+        nextFilePath === filePath
+          ? normalized
+          : renameProject(normalized, filePath, nextFilePath, projectName)
+
+      return addProjectToCategory(renamedLibrary, categoryId, nextFilePath, projectName)
+    }).then(async (library) => {
+      const syncedLibrary = library.workspacePath ? await readSyncedMabelLibrary() : library
+      const project = library.categories.find((category) => category.id === categoryId)?.items[0]
+
+      return {
+        library: syncedLibrary,
+        project: project
+          ? {
+              filePath: project.path,
+              name: project.name
+            }
+          : null
+      }
+    })
+  })
   ipcMain.handle('library:remove-project-from-category', (_, { categoryId, filePath }) =>
     updateMabelLibrary((library) => removeProjectFromCategory(library, categoryId, filePath))
-  )
-  ipcMain.handle('library:touch-recent-project', (_, { filePath, name }) =>
-    updateMabelLibrary((library) => touchRecentProject(library, filePath, name))
   )
 }
 

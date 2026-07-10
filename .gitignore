@@ -7,3 +7,16 @@ out
 .eslintcache
 *.log*
 *.pur
+
+# Local secrets and signing material
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.cer
+*.crt
+*.csr
+*.key
+*.pem
+*.pvk

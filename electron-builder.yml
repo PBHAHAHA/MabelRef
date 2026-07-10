@@ -11,11 +11,18 @@ files:
 asarUnpack:
   - resources/**
 win:
+  icon: build/icon.ico
   executableName: MabelRef
+  target:
+    - target: nsis
+      arch:
+        - x64
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
+  menuCategory: MabelRef
+  createStartMenuShortcut: true
   createDesktopShortcut: always
 mac:
   entitlementsInherit: build/entitlements.mac.plist

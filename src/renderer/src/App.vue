@@ -1,18 +1,18 @@
 <script setup>
 /**
- * [INPUT]: 依赖 CanvasViewer 组件、createEmptyMabelProject 与 preload 暴露的 windowControls/project API
- * [OUTPUT]: 对外提供图片查看器根组件、画布专注模式、直接新建/打开/保存 .mabel 项目文件和 Windows 风格窗口控制栏
+ * [INPUT]: 依赖 CanvasViewer 组件、createEmptyMabelProject 与 preload 暴露的 windowControls/project/library API
+ * [OUTPUT]: 对外提供图片查看器根组件、工作空间设置、分类管理、画布专注模式、直接新建/打开/保存 .mabel 项目文件和 Windows 风格窗口控制栏
  * [POS]: renderer 根组件，组织窗口壳与单画布项目文件工作流
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import {
   FilePlus2,
   FolderSearch,
+  FolderUp,
   PanelLeftClose,
   PanelLeftOpen,
   Pin,
   PinOff,
-  Plus,
   Trash2,
   ChevronDown,
   ChevronRight,
@@ -27,6 +27,7 @@ import {
 } from 'lucide-vue-next'
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { createEmptyMabelProject } from '../../shared/mabelProject.mjs'
+import appLogo from './assets/logo1.png'
 import CanvasViewer from './components/CanvasViewer.vue'
 import {
   formatShortcut,
@@ -51,9 +52,12 @@ const isCanvasGrayscale = ref(false)
 const isTopBarVisible = ref(false)
 const isTopBarDragging = ref(false)
 const isLibraryOpen = ref(false)
-const library = ref({ recentProjects: [], categories: [] })
+const library = ref({ workspacePath: '', rootProjects: [], categories: [] })
 const contextMenu = ref(null)
 const isSettingsDialogOpen = ref(false)
+const isProjectNameDialogOpen = ref(false)
+const pendingProjectName = ref('未命名')
+const projectNameDialogResolver = ref(null)
 const settingsSaveStatus = ref('')
 const shortcutCaptureAction = ref('')
 const shortcutSettings = ref(getShortcutSettings())
@@ -115,6 +119,31 @@ const nextFrame = () =>
 
 const getRequestId = () => crypto.randomUUID()
 
+const openProjectNameDialog = (name = '未命名') =>
+  new Promise((resolve) => {
+    pendingProjectName.value = name
+    isProjectNameDialogOpen.value = true
+    projectNameDialogResolver.value = resolve
+
+    nextTick(() => {
+      document.querySelector('.project-name-dialog-input')?.focus()
+      document.querySelector('.project-name-dialog-input')?.select()
+    })
+  })
+
+const closeProjectNameDialog = (fileName = '') => {
+  isProjectNameDialogOpen.value = false
+  const resolve = projectNameDialogResolver.value
+  projectNameDialogResolver.value = null
+  resolve?.(fileName)
+}
+
+const submitProjectNameDialog = () => {
+  const name = pendingProjectName.value.trim()
+  if (!name) return
+  closeProjectNameDialog(name)
+}
+
 const minimizeWindow = () => window.api.windowControls.minimize()
 const toggleMaximizeWindow = async () => {
   isMaximized.value = await window.api.windowControls.toggleMaximize()
@@ -123,6 +152,11 @@ const closeWindow = () => window.api.windowControls.close()
 
 const refreshLibrary = async () => {
   library.value = await window.api.library.get()
+}
+
+const setLibraryWorkspace = async () => {
+  library.value = await window.api.library.setWorkspace()
+  await createNewProject()
 }
 
 const toggleLibrarySidebar = () => {
@@ -385,8 +419,15 @@ const openProjectPath = async (filePath) => {
   await refreshLibrary()
 }
 
-const saveProject = async () => {
+const saveProject = async ({ categoryId = '' } = {}) => {
   if (!canvasViewer.value) return
+  let fileName = ''
+
+  if (!activeProjectPath.value && !categoryId && library.value.workspacePath) {
+    fileName = await openProjectNameDialog(projectName.value || '未命名')
+    if (!fileName) return
+  }
+
   canvasViewer.value.markSaving()
   await nextFrame()
 
@@ -399,6 +440,8 @@ const saveProject = async () => {
   try {
     result = await window.api.project.save({
       filePath: activeProjectPath.value,
+      categoryId,
+      fileName,
       requestId,
       project: canvasViewer.value.getProject()
     })
@@ -421,6 +464,11 @@ const toggleCanvasGrayscale = () => {
 }
 
 const startCreateCategory = async () => {
+  if (!library.value.workspacePath) {
+    projectError.value = '请先设置工作空间，再新建分类'
+    return
+  }
+
   closeLibraryContextMenu()
   isCreatingCategory.value = true
   newCategoryName.value = ''
@@ -516,17 +564,21 @@ const removeLibraryCategory = async (category) => {
 }
 
 const addProjectToLibraryCategory = async (category, project) => {
-  library.value = await window.api.library.addProjectToCategory(category.id, {
+  const result = await window.api.library.addProjectToCategory(category.id, {
     filePath: project.path,
     name: project.name
   })
+  library.value = result.library
+
+  if (project.path === activeProjectPath.value && result.project?.filePath) {
+    activeProjectPath.value = result.project.filePath
+    projectName.value = result.project.name || projectName.value
+  }
 }
 
 const addCurrentProjectToCategory = async (category) => {
-  if (!activeProjectPath.value) {
-    projectError.value = '请先保存当前项目，再加入分类'
-    return
-  }
+  await saveProject({ categoryId: category.id })
+  if (!activeProjectPath.value) return
 
   await addProjectToLibraryCategory(category, {
     path: activeProjectPath.value,
@@ -559,6 +611,11 @@ const handleCategoryDrop = async (event, category) => {
 
 const openLibraryContextMenu = (event, type, payload = {}) => {
   event.preventDefault()
+  if (type === 'library' && !library.value.workspacePath) {
+    projectError.value = '请先设置工作空间，再新建分类'
+    return
+  }
+
   contextMenu.value = {
     type,
     payload,
@@ -578,6 +635,7 @@ const runContextAction = async (action) => {
 
   if (action === 'rename-category') await startRenameLibraryCategory(menu.payload.category)
   if (action === 'remove-category') await removeLibraryCategory(menu.payload.category)
+  if (action === 'create-category') await startCreateCategory()
   if (action === 'add-current') await addCurrentProjectToCategory(menu.payload.category)
   if (action === 'rename-project') await startRenameLibraryProject(menu.payload.project)
   if (action === 'show-project-folder') {
@@ -711,17 +769,44 @@ onBeforeUnmount(() => {
       <aside
         v-if="!isCanvasFocusMode && isLibraryOpen"
         class="library-sidebar"
+        @contextmenu="openLibraryContextMenu($event, 'library')"
       >
+        <div class="library-brand">
+          <img :src="appLogo" alt="" class="library-brand-logo" />
+          <div class="library-brand-copy">
+            <strong>MabelRef</strong>
+          </div>
+        </div>
+
         <p v-if="projectError" class="library-error">{{ projectError }}</p>
 
+        <button
+          v-if="!library.workspacePath"
+          type="button"
+          class="library-workspace-button"
+          @click="setLibraryWorkspace"
+        >
+          <FolderUp :size="14" :stroke-width="2" />
+          <span>设置工作空间</span>
+        </button>
+
         <section class="library-section">
-          <div class="library-section-header">
-            <span>最近打开</span>
-            <span class="section-count">{{ library.recentProjects.length }}</span>
-          </div>
+          <input
+            v-if="isCreatingCategory"
+            ref="newCategoryInput"
+            v-model="newCategoryName"
+            class="library-category-input"
+            type="text"
+            placeholder="分类名称"
+            @keydown.enter.prevent="submitCreateCategory"
+            @keydown.esc.prevent="cancelCreateCategory"
+            @blur="submitCreateCategory"
+            @click.stop
+          />
+
           <div class="library-section-items">
             <div
-              v-for="project in library.recentProjects"
+              v-for="project in library.rootProjects"
               :key="project.path"
               role="button"
               tabindex="0"
@@ -734,7 +819,7 @@ onBeforeUnmount(() => {
               @dragstart="handleRecentDragStart($event, project)"
               @contextmenu.stop="openLibraryContextMenu($event, 'project', { project })"
             >
-              <span class="project-icon recent">
+              <span class="project-icon">
                 <FileImage :size="14" :stroke-width="2" />
               </span>
               <input
@@ -749,35 +834,7 @@ onBeforeUnmount(() => {
               />
               <span v-else class="project-name">{{ project.name }}</span>
             </div>
-            <p v-if="library.recentProjects.length === 0" class="library-empty">还没有保存的项目</p>
           </div>
-        </section>
-
-        <section class="library-section">
-          <div class="library-section-header">
-            <span>分类</span>
-            <button
-              type="button"
-              title="新建分类"
-              aria-label="新建分类"
-              @click="startCreateCategory"
-            >
-              <Plus :size="14" :stroke-width="2" />
-            </button>
-          </div>
-
-          <input
-            v-if="isCreatingCategory"
-            ref="newCategoryInput"
-            v-model="newCategoryName"
-            class="library-category-input"
-            type="text"
-            placeholder="分类名称"
-            @keydown.enter.prevent="submitCreateCategory"
-            @keydown.esc.prevent="cancelCreateCategory"
-            @blur="submitCreateCategory"
-            @click.stop
-          />
 
           <div
             v-for="category in library.categories"
@@ -851,7 +908,9 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
-          <p v-if="library.categories.length === 0" class="library-empty">右键或点加号新建分类</p>
+          <p v-if="library.categories.length === 0 && library.rootProjects.length === 0" class="library-empty">
+            {{ library.workspacePath ? '右键新建分类，或保存项目到工作空间' : '先设置工作空间' }}
+          </p>
         </section>
       </aside>
 
@@ -859,11 +918,13 @@ onBeforeUnmount(() => {
         :key="canvasSessionId"
         ref="canvasViewer"
         :focus-mode="isCanvasFocusMode"
+        :has-workspace="Boolean(library.workspacePath)"
         :shortcuts="shortcutSettings"
         @image-loaded="handleImageLoaded"
         @open-project-file="openProjectPath"
         @save-project="saveProject"
         @selected-image-change="handleSelectedImageChange"
+        @set-workspace="setLibraryWorkspace"
       />
     </main>
 
@@ -873,6 +934,13 @@ onBeforeUnmount(() => {
       :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
       @click.stop
     >
+      <button
+        v-if="contextMenu.type === 'library'"
+        type="button"
+        @click="runContextAction('create-category')"
+      >
+        新建分类
+      </button>
       <button
         v-if="contextMenu.type === 'category'"
         type="button"
@@ -921,12 +989,41 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
+    <div
+      v-if="isProjectNameDialogOpen"
+      class="project-name-backdrop"
+      @click.self="closeProjectNameDialog('')"
+    >
+      <form class="project-name-dialog" @submit.prevent="submitProjectNameDialog">
+        <header class="project-name-dialog-header">
+          <h2>保存项目</h2>
+          <button type="button" aria-label="关闭" title="关闭" @click="closeProjectNameDialog('')">
+            <X :size="16" :stroke-width="2" />
+          </button>
+        </header>
+        <label class="project-name-dialog-field">
+          <span>文件名</span>
+          <input
+            v-model="pendingProjectName"
+            class="project-name-dialog-input"
+            type="text"
+            placeholder="未命名"
+            @keydown.esc.prevent="closeProjectNameDialog('')"
+          />
+        </label>
+        <div class="project-name-dialog-actions">
+          <button type="button" @click="closeProjectNameDialog('')">取消</button>
+          <button type="submit" :disabled="!pendingProjectName.trim()">保存</button>
+        </div>
+      </form>
+    </div>
+
     <div v-if="isSettingsDialogOpen" class="settings-backdrop" @click.self="closeSettingsDialog">
       <section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <header class="settings-header">
           <div>
             <h2 id="settings-title">设置</h2>
-            <p>快捷键与 AI 配置</p>
+            <p>工作空间、快捷键与 AI 配置</p>
           </div>
           <button type="button" aria-label="关闭设置" title="关闭设置" @click="closeSettingsDialog">
             <X :size="16" :stroke-width="2" />
@@ -934,6 +1031,18 @@ onBeforeUnmount(() => {
         </header>
 
         <div class="settings-content">
+          <section class="settings-section">
+            <div class="settings-section-title">
+              <h3>工作空间</h3>
+              <button type="button" class="settings-text-button" @click="setLibraryWorkspace">
+                {{ library.workspacePath ? '更改' : '设置' }}
+              </button>
+            </div>
+            <div class="settings-workspace-path" :title="library.workspacePath || '未设置'">
+              {{ library.workspacePath || '未设置' }}
+            </div>
+          </section>
+
           <section class="settings-section">
             <div class="settings-section-title">
               <h3>快捷键</h3>

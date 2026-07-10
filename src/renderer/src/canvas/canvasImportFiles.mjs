@@ -8,8 +8,13 @@ export function isMabelProjectFile(file) {
   return file?.name?.toLowerCase().endsWith('.mabel') || false
 }
 
+export function isImageFile(file) {
+  if (file?.type?.startsWith('image/')) return true
+  return /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(file?.name || '')
+}
+
 export function getImageFiles(files) {
-  return files.filter((file) => file.type?.startsWith('image/') && !isMabelProjectFile(file))
+  return files.filter((file) => isImageFile(file) && !isMabelProjectFile(file))
 }
 
 export function getDroppedMabelProjectPath(files, getPath) {

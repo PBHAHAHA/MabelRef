@@ -495,14 +495,20 @@ export function useLeaferImageEditor() {
     const sources = []
 
     for (const file of imageFiles) {
-      const source = await getImageSize(file)
-      const assetId = getId('asset')
-      const nodeId = getId('node')
-      const bytes = await readFileAsBytes(file)
-      const originalPath = getOriginalPath(file)
+      try {
+        const source = await getImageSize(file)
+        const assetId = getId('asset')
+        const nodeId = getId('node')
+        const bytes = await readFileAsBytes(file)
+        const originalPath = getOriginalPath(file)
 
-      sources.push({ assetId, bytes, file, nodeId, originalPath, source })
+        sources.push({ assetId, bytes, file, nodeId, originalPath, source })
+      } catch {
+        // Keep importing the rest of the dropped files if one image cannot be decoded.
+      }
     }
+
+    if (sources.length === 0) return 0
 
     const layout = packImages({
       items: sources.map(({ source }) => ({ width: source.width, height: source.height })),
@@ -551,35 +557,39 @@ export function useLeaferImageEditor() {
     let nextY = point.y
 
     for (const file of imageFiles) {
-      const source = await getImageSize(file)
-      const assetId = getId('asset')
-      const nodeId = getId('node')
-      const bytes = await readFileAsBytes(file)
-      const originalPath = getOriginalPath(file)
-      const node = new Image({
-        id: nodeId,
-        url: source.url,
-        x: point.x,
-        y: nextY,
-        width: source.width,
-        height: source.height,
-        grayscale: isGrayscaleEnabled.value ? 1 : 0,
-        draggable: true,
-        editable: true
-      })
-      const imageRecord = createImageRecord({
-        assetId,
-        bytes,
-        file,
-        node,
-        nodeId,
-        originalPath
-      })
+      try {
+        const source = await getImageSize(file)
+        const assetId = getId('asset')
+        const nodeId = getId('node')
+        const bytes = await readFileAsBytes(file)
+        const originalPath = getOriginalPath(file)
+        const node = new Image({
+          id: nodeId,
+          url: source.url,
+          x: point.x,
+          y: nextY,
+          width: source.width,
+          height: source.height,
+          grayscale: isGrayscaleEnabled.value ? 1 : 0,
+          draggable: true,
+          editable: true
+        })
+        const imageRecord = createImageRecord({
+          assetId,
+          bytes,
+          file,
+          node,
+          nodeId,
+          originalPath
+        })
 
-      app.value.tree.add(node)
-      objectUrls.push(source.url)
-      importedFiles.push(imageRecord)
-      nextY += source.height + GAP
+        app.value.tree.add(node)
+        objectUrls.push(source.url)
+        importedFiles.push(imageRecord)
+        nextY += source.height + GAP
+      } catch {
+        // Keep importing the rest of the pasted files if one image cannot be decoded.
+      }
     }
 
     files.value = [...files.value, ...importedFiles]

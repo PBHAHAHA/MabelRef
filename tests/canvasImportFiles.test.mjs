@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import {
   getDroppedMabelProjectPath,
   getImageFiles,
+  isImageFile,
   isMabelProjectFile
 } from '../src/renderer/src/canvas/canvasImportFiles.mjs'
 
@@ -17,10 +18,19 @@ describe('canvas import files', () => {
     const files = [
       { name: 'Board.mabel', type: '' },
       { name: 'photo.png', type: 'image/png' },
+      { name: 'reference.jpg', type: '' },
       { name: 'notes.txt', type: 'text/plain' }
     ]
 
-    assert.deepEqual(getImageFiles(files), [{ name: 'photo.png', type: 'image/png' }])
+    assert.deepEqual(getImageFiles(files), [
+      { name: 'photo.png', type: 'image/png' },
+      { name: 'reference.jpg', type: '' }
+    ])
+  })
+
+  it('detects image files by extension when the mime type is empty', () => {
+    assert.equal(isImageFile({ name: 'pose.WEBP', type: '' }), true)
+    assert.equal(isImageFile({ name: 'notes.txt', type: '' }), false)
   })
 
   it('returns the first dropped mabel project path', () => {
