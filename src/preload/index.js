@@ -12,6 +12,13 @@ const api = {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
     close: () => ipcRenderer.invoke('window:close'),
+    finishClose: (allowClose) => ipcRenderer.send('window:close-response', Boolean(allowClose)),
+    onCloseRequest: (callback) => {
+      const listener = () => callback()
+
+      ipcRenderer.on('window:close-request', listener)
+      return () => ipcRenderer.removeListener('window:close-request', listener)
+    },
     setCanvasFocusMode: (enabled) => ipcRenderer.invoke('window:set-canvas-focus-mode', enabled),
     togglePin: () => ipcRenderer.invoke('window:toggle-pin'),
     beginCanvasDrag: () => ipcRenderer.invoke('window:begin-canvas-drag'),

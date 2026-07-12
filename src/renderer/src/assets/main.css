@@ -396,6 +396,7 @@ button {
   font-size: 12px;
   font-weight: 400;
   text-align: left;
+  user-select: none;
   transition:
     background-color 140ms ease,
     color 140ms ease;
@@ -439,6 +440,7 @@ button {
   font-size: inherit;
   padding: 0 6px;
   line-height: 22px;
+  cursor: text;
   user-select: text;
 }
 

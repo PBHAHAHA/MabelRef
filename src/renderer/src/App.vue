@@ -74,6 +74,8 @@ const newCategoryInput = ref(null)
 const editingLibraryItem = ref(null)
 const editingLibraryName = ref('')
 let projectOpenRequestId = 0
+let savedProjectSnapshot = ''
+let unsubscribeCloseRequest = null
 const SETTINGS_STORAGE_KEY = 'mabelref.settings'
 const SHOW_AI_FEATURES = false
 
@@ -119,6 +121,26 @@ const nextFrame = () =>
 
 const getRequestId = () => crypto.randomUUID()
 
+const getCurrentProjectSnapshot = () => {
+  if (!canvasViewer.value) return ''
+
+  try {
+    return JSON.stringify(canvasViewer.value.getProject())
+  } catch {
+    return ''
+  }
+}
+
+const markProjectClean = () => {
+  savedProjectSnapshot = getCurrentProjectSnapshot()
+}
+
+const hasUnsavedChanges = () => {
+  const currentSnapshot = getCurrentProjectSnapshot()
+
+  return Boolean(currentSnapshot) && currentSnapshot !== savedProjectSnapshot
+}
+
 const openProjectNameDialog = (name = '未命名') =>
   new Promise((resolve) => {
     pendingProjectName.value = name
@@ -155,8 +177,10 @@ const refreshLibrary = async () => {
 }
 
 const setLibraryWorkspace = async () => {
+  if (!(await confirmProjectChange())) return
+
   library.value = await window.api.library.setWorkspace()
-  await createNewProject()
+  await createNewProject({ skipUnsavedCheck: true })
 }
 
 const toggleLibrarySidebar = () => {
@@ -372,9 +396,25 @@ const loadProjectIntoCanvas = async ({ filePath = '', name = '未命名', projec
 
   await canvasViewer.value.loadProject(project)
   imageCount.value = project.nodes.length
+  markProjectClean()
 }
 
-const createNewProject = async () => {
+const confirmProjectChange = async () => {
+  if (!hasUnsavedChanges()) return true
+
+  const action = await window.api.project.confirmUnsavedChanges({
+    projectName: projectName.value || '未命名'
+  })
+
+  if (action === 'cancel') return false
+  if (action === 'discard') return true
+
+  return saveProject()
+}
+
+const createNewProject = async ({ skipUnsavedCheck = false } = {}) => {
+  if (!skipUnsavedCheck && !(await confirmProjectChange())) return
+
   const requestId = (projectOpenRequestId += 1)
   await loadProjectIntoCanvas({
     filePath: '',
@@ -384,6 +424,8 @@ const createNewProject = async () => {
 }
 
 const openProject = async () => {
+  if (!(await confirmProjectChange())) return
+
   const requestId = (projectOpenRequestId += 1)
   projectError.value = ''
 
@@ -402,6 +444,9 @@ const openProject = async () => {
 }
 
 const openProjectPath = async (filePath) => {
+  if (filePath === activeProjectPath.value) return
+  if (!(await confirmProjectChange())) return
+
   const requestId = (projectOpenRequestId += 1)
   projectError.value = ''
 
@@ -420,12 +465,12 @@ const openProjectPath = async (filePath) => {
 }
 
 const saveProject = async ({ categoryId = '' } = {}) => {
-  if (!canvasViewer.value) return
+  if (!canvasViewer.value) return false
   let fileName = ''
 
   if (!activeProjectPath.value && !categoryId && library.value.workspacePath) {
     fileName = await openProjectNameDialog(projectName.value || '未命名')
-    if (!fileName) return
+    if (!fileName) return false
   }
 
   canvasViewer.value.markSaving()
@@ -445,18 +490,29 @@ const saveProject = async ({ categoryId = '' } = {}) => {
       requestId,
       project: canvasViewer.value.getProject()
     })
+  } catch (error) {
+    projectError.value = error.message || '项目保存失败'
+    canvasViewer.value.markSaveCanceled()
+    return false
   } finally {
     unsubscribe()
   }
 
   if (result.canceled) {
     canvasViewer.value.markSaveCanceled()
-    return
+    return false
   }
   activeProjectPath.value = result.filePath
   projectName.value = result.name || projectName.value
   canvasViewer.value.markSaved()
+  markProjectClean()
   await refreshLibrary()
+  return true
+}
+
+const handleCloseRequest = async () => {
+  const allowClose = await confirmProjectChange()
+  window.api.windowControls.finishClose(allowClose)
 }
 
 const toggleCanvasGrayscale = () => {
@@ -648,14 +704,17 @@ const runContextAction = async (action) => {
 
 onMounted(() => {
   loadSettings()
-  createNewProject()
+  createNewProject({ skipUnsavedCheck: true })
   refreshLibrary()
+  unsubscribeCloseRequest = window.api.windowControls.onCloseRequest(handleCloseRequest)
   window.addEventListener('pointerup', handleWindowPointerUp)
   window.addEventListener('click', closeLibraryContextMenu)
   window.addEventListener('keydown', handleWindowKeydown)
 })
 
 onBeforeUnmount(() => {
+  unsubscribeCloseRequest?.()
+  unsubscribeCloseRequest = null
   window.removeEventListener('pointerup', handleWindowPointerUp)
   window.removeEventListener('click', closeLibraryContextMenu)
   window.removeEventListener('keydown', handleWindowKeydown)
@@ -812,7 +871,7 @@ onBeforeUnmount(() => {
               tabindex="0"
               class="library-project"
               :class="{ active: project.path === activeProjectPath }"
-              draggable="true"
+              :draggable="!isEditingLibraryProject(project)"
               :title="project.path"
               @click="!isEditingLibraryProject(project) && openProjectPath(project.path)"
               @keydown.enter.prevent="!isEditingLibraryProject(project) && openProjectPath(project.path)"
@@ -827,7 +886,10 @@ onBeforeUnmount(() => {
                 v-model="editingLibraryName"
                 class="library-rename-input"
                 type="text"
+                @pointerdown.stop
+                @mousedown.stop
                 @click.stop
+                @dragstart.stop
                 @keydown.enter.stop.prevent="submitRenameLibraryItem"
                 @keydown.esc.stop.prevent="cancelRenameLibraryItem"
                 @blur="submitRenameLibraryItem"
@@ -864,7 +926,10 @@ onBeforeUnmount(() => {
                 v-model="editingLibraryName"
                 class="library-rename-input"
                 type="text"
+                @pointerdown.stop
+                @mousedown.stop
                 @click.stop
+                @dragstart.stop
                 @keydown.enter.stop.prevent="submitRenameLibraryItem"
                 @keydown.esc.stop.prevent="cancelRenameLibraryItem"
                 @blur="submitRenameLibraryItem"
@@ -882,7 +947,7 @@ onBeforeUnmount(() => {
                 tabindex="0"
                 class="library-project nested"
                 :class="{ active: project.path === activeProjectPath }"
-                draggable="true"
+                :draggable="!isEditingLibraryProject(project)"
                 :title="project.path"
                 @click="!isEditingLibraryProject(project) && openProjectPath(project.path)"
                 @keydown.enter.prevent="!isEditingLibraryProject(project) && openProjectPath(project.path)"
@@ -899,7 +964,10 @@ onBeforeUnmount(() => {
                   v-model="editingLibraryName"
                   class="library-rename-input"
                   type="text"
+                  @pointerdown.stop
+                  @mousedown.stop
                   @click.stop
+                  @dragstart.stop
                   @keydown.enter.stop.prevent="submitRenameLibraryItem"
                   @keydown.esc.stop.prevent="cancelRenameLibraryItem"
                   @blur="submitRenameLibraryItem"
