@@ -120,6 +120,43 @@ const pathExists = async (filePath) => {
   }
 }
 
+const getImageFileNameFromUrl = (imageUrl, mime) => {
+  const extension = {
+    'image/avif': 'avif',
+    'image/bmp': 'bmp',
+    'image/gif': 'gif',
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/svg+xml': 'svg',
+    'image/webp': 'webp'
+  }[mime]
+
+  try {
+    const name = basename(decodeURIComponent(new URL(imageUrl).pathname))
+    if (name && extname(name)) return name
+  } catch {
+    // Keep the fallback name below.
+  }
+
+  return `dropped-image.${extension || 'png'}`
+}
+
+const getImageExtensionFromMime = (mime) =>
+  ({
+    'image/avif': 'avif',
+    'image/bmp': 'bmp',
+    'image/gif': 'gif',
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/svg+xml': 'svg',
+    'image/webp': 'webp'
+  })[mime] || 'png'
+
+const getSafeImageFileName = (name, mime) => {
+  const safeName = sanitizePathName(name || 'image', 'image')
+  return extname(safeName) ? safeName : `${safeName}.${getImageExtensionFromMime(mime)}`
+}
+
 const getLibraryPath = () => join(app.getPath('userData'), 'mabel-library.json')
 
 async function readMabelLibrary() {
@@ -462,12 +499,63 @@ function registerMabelLibrary() {
   )
 }
 
-function registerFileActions() {
+function registerFileActions(window) {
   ipcMain.handle('file:show-in-folder', (_, filePath) => {
     if (!filePath) return false
 
     shell.showItemInFolder(filePath)
     return true
+  })
+
+  ipcMain.handle('file:save-image-as', async (_, image) => {
+    if (!image?.bytes?.length) {
+      throw new Error('找不到可保存的图片数据')
+    }
+
+    const mime = String(image.mime || 'image/png')
+    const defaultName = getSafeImageFileName(image.name, mime)
+    const result = await dialog.showSaveDialog(window, {
+      title: '图片另存为',
+      defaultPath: join(app.getPath('pictures'), defaultName),
+      filters: [
+        { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif', 'svg'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    })
+
+    if (result.canceled || !result.filePath) {
+      return { canceled: true }
+    }
+
+    await writeFile(result.filePath, Buffer.from(image.bytes))
+    return {
+      canceled: false,
+      filePath: result.filePath
+    }
+  })
+
+  ipcMain.handle('file:fetch-image-url', async (_, imageUrl) => {
+    const url = new URL(String(imageUrl || ''))
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error('只支持从 http 或 https 图片地址导入')
+    }
+
+    const response = await fetch(url)
+    if (!response.ok) {
+      throw new Error(`图片下载失败：${response.status}`)
+    }
+
+    const mime = (response.headers.get('content-type') || '').split(';')[0].trim()
+    if (!mime.startsWith('image/')) {
+      throw new Error('拖入的地址不是图片')
+    }
+
+    const bytes = Buffer.from(await response.arrayBuffer())
+    return {
+      bytes: [...bytes],
+      mime,
+      name: getImageFileNameFromUrl(url.toString(), mime)
+    }
   })
 }
 
@@ -655,7 +743,7 @@ function createWindow() {
   registerWindowControls(mainWindow)
   registerProjectFiles(mainWindow)
   registerMabelLibrary()
-  registerFileActions()
+  registerFileActions(mainWindow)
   registerAiActions()
 
   mainWindow.on('ready-to-show', () => {

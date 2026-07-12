@@ -6,9 +6,11 @@
  */
 export const DEFAULT_SHORTCUTS = {
   arrange: 'Ctrl+R',
+  copy: 'Ctrl+C',
   delete: ['Delete', 'Backspace'],
   'layer-down': 'Ctrl+ArrowDown',
   'layer-up': 'Ctrl+ArrowUp',
+  paste: 'Ctrl+V',
   redo: 'Ctrl+Y',
   save: 'Ctrl+S',
   sidebar: 'Ctrl+B',
@@ -16,6 +18,8 @@ export const DEFAULT_SHORTCUTS = {
 }
 
 export const SHORTCUT_LABELS = {
+  copy: 'Copy image',
+  paste: 'Paste image',
   arrange: '排版选中图片',
   delete: '删除选中图片',
   'layer-down': '图片下移一层',
@@ -29,6 +33,8 @@ export const SHORTCUT_LABELS = {
 export const SHORTCUT_ACTIONS = [
   'sidebar',
   'save',
+  'copy',
+  'paste',
   'undo',
   'redo',
   'layer-up',

@@ -12,6 +12,7 @@ import { getCanvasShortcut } from '../canvas/canvasShortcuts.mjs'
 import { getDroppedMabelProjectPath, getImageFiles } from '../canvas/canvasImportFiles.mjs'
 import { getClipboardImageFiles } from '../canvas/clipboardImages.mjs'
 import { collectDroppedFiles } from '../canvas/directoryEntries.mjs'
+import { dataUrlToFile, getDroppedImageUrls } from '../canvas/droppedImageSources.mjs'
 import { getWheelZoomFactor } from '../canvas/viewportZoom.mjs'
 import { useLeaferImageEditor } from '../canvas/useLeaferImageEditor'
 
@@ -54,12 +55,36 @@ const SHOW_AI_FEATURES = false
 let pendingWheelDelta = 0
 let pendingWheelPoint = null
 let pendingWheelFrame = 0
+let copiedImages = []
+let pendingInternalPasteTimer = 0
 
 const importFiles = async (files) => {
   const count = await editor.addFiles(files)
 
   if (count > 0) emit('image-loaded', count)
   return count
+}
+
+const getDroppedImageUrlFiles = async (dataTransfer) => {
+  const urls = getDroppedImageUrls(dataTransfer)
+  const files = []
+
+  for (const url of urls) {
+    try {
+      if (url.startsWith('data:image/')) {
+        const file = dataUrlToFile(url)
+        if (file) files.push(file)
+        continue
+      }
+
+      const image = await window.api.files.fetchImageFromUrl(url)
+      files.push(new File([new Uint8Array(image.bytes)], image.name, { type: image.mime }))
+    } catch {
+      // Ignore a failed URL and keep importing any other dragged images.
+    }
+  }
+
+  return files
 }
 
 const handleDrop = async (event) => {
@@ -76,22 +101,54 @@ const handleDrop = async (event) => {
   }
 
   const droppedFiles = await collectDroppedFiles(event.dataTransfer)
-  await importFiles(getImageFiles(droppedFiles))
+  const imageFiles = getImageFiles(droppedFiles)
+  const imageUrlFiles =
+    imageFiles.length > 0 ? [] : await getDroppedImageUrlFiles(event.dataTransfer)
+
+  await importFiles([...imageFiles, ...imageUrlFiles])
 }
 
-const handlePaste = async (event) => {
-  const files = getClipboardImageFiles(event.clipboardData)
-  if (files.length === 0) return
-
-  event.preventDefault()
+const getPastePoint = () => {
   const rect = editorHost.value.getBoundingClientRect()
   const fallbackPoint = {
     x: rect.left + rect.width / 2,
     y: rect.top + rect.height / 2
   }
-  const count = await editor.pasteFilesAt(files, lastPointer.value || fallbackPoint)
+
+  return lastPointer.value || fallbackPoint
+}
+
+const pasteImageFiles = async (files, point = getPastePoint()) => {
+  const count = await editor.pasteFilesAt(files, point)
 
   if (count > 0) emit('image-loaded', count)
+  return count
+}
+
+const pasteCopiedImages = async (point = getPastePoint()) => {
+  const count = await editor.pasteCopiedImagesAt(copiedImages, point)
+
+  if (count > 0) emit('image-loaded', count)
+  return count
+}
+
+const handlePaste = async (event) => {
+  if (pendingInternalPasteTimer) {
+    clearTimeout(pendingInternalPasteTimer)
+    pendingInternalPasteTimer = 0
+  }
+
+  const files = getClipboardImageFiles(event.clipboardData)
+  if (files.length > 0) {
+    event.preventDefault()
+    await pasteImageFiles(files)
+    return
+  }
+
+  if (copiedImages.length === 0) return
+
+  event.preventDefault()
+  await pasteCopiedImages()
 }
 
 const handlePointerMove = (event) => {
@@ -212,8 +269,25 @@ const handleKeydown = (event) => {
   const shortcut = getCanvasShortcut(event, props.shortcuts)
   if (!shortcut) return
 
+  if (shortcut === 'paste') {
+    closeImageContextMenu()
+    if (copiedImages.length === 0) return
+
+    if (pendingInternalPasteTimer) clearTimeout(pendingInternalPasteTimer)
+    pendingInternalPasteTimer = window.setTimeout(() => {
+      pendingInternalPasteTimer = 0
+      pasteCopiedImages()
+    }, 30)
+    return
+  }
+
   event.preventDefault()
   closeImageContextMenu()
+  if (shortcut === 'copy') {
+    copiedImages = editor.copySelectedImages()
+    return
+  }
+
   if (shortcut === 'save') {
     emit('save-project')
     return
@@ -330,6 +404,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (pendingWheelFrame) cancelAnimationFrame(pendingWheelFrame)
+  if (pendingInternalPasteTimer) clearTimeout(pendingInternalPasteTimer)
   editor.destroy()
 })
 </script>

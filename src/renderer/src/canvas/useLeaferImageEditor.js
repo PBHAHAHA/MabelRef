@@ -387,6 +387,25 @@ export function useLeaferImageEditor() {
     }
   }
 
+  const copySelectedImages = () => {
+    const selectedRecords = getSelectedRecords()
+    if (selectedRecords.length === 0) return []
+
+    return selectedRecords.map((file) => ({
+      bytes: new Uint8Array(file.bytes),
+      height: file.node.height || 1,
+      mime: file.mime,
+      name: file.name,
+      originalPath: file.originalPath || '',
+      rotation: file.node.rotation || 0,
+      scaleX: file.node.scaleX ?? 1,
+      scaleY: file.node.scaleY ?? 1,
+      width: file.node.width || 1,
+      x: file.node.x || 0,
+      y: file.node.y || 0
+    }))
+  }
+
   const replaceImageWithBytes = async ({ nodeId, bytes, mime }) => {
     const imageRecord = files.value.find((file) => file.nodeId === nodeId)
     if (!imageRecord || !bytes?.length) return false
@@ -599,6 +618,58 @@ export function useLeaferImageEditor() {
         nextY += source.height + GAP
       } catch {
         // Keep importing the rest of the pasted files if one image cannot be decoded.
+      }
+    }
+
+    files.value = [...files.value, ...importedFiles]
+    return importedFiles.length
+  }
+
+  const pasteCopiedImagesAt = async (copiedImages, clientPoint) => {
+    if (!app.value || copiedImages.length === 0) return 0
+
+    const point = toCanvasPoint(clientPoint)
+    const minX = Math.min(...copiedImages.map((image) => image.x || 0))
+    const minY = Math.min(...copiedImages.map((image) => image.y || 0))
+    const importedFiles = []
+
+    rememberCanvasState()
+    for (const image of copiedImages) {
+      try {
+        const assetId = getId('asset')
+        const nodeId = getId('node')
+        const bytes = image.bytes instanceof Uint8Array ? image.bytes : new Uint8Array(image.bytes)
+        const url = bytesToObjectUrl(bytes, image.mime || 'application/octet-stream')
+        const node = new Image({
+          id: nodeId,
+          url,
+          x: point.x + (image.x || 0) - minX,
+          y: point.y + (image.y || 0) - minY,
+          width: image.width || 1,
+          height: image.height || 1,
+          scaleX: image.scaleX ?? 1,
+          scaleY: image.scaleY ?? 1,
+          rotation: image.rotation || 0,
+          grayscale: isGrayscaleEnabled.value ? 1 : 0,
+          lockRatio: true,
+          skewable: false,
+          draggable: true,
+          editable: true
+        })
+        const imageRecord = createImageRecord({
+          assetId,
+          bytes,
+          file: { name: image.name || 'copied-image.png', type: image.mime || 'image/png' },
+          node,
+          nodeId,
+          originalPath: image.originalPath || ''
+        })
+
+        app.value.tree.add(node)
+        objectUrls.push(url)
+        importedFiles.push(imageRecord)
+      } catch {
+        // Keep pasting the rest if one copied image cannot be restored.
       }
     }
 
@@ -844,6 +915,7 @@ export function useLeaferImageEditor() {
 
   return {
     addFiles,
+    copySelectedImages,
     deleteSelectedImages,
     destroy,
     exportProject,
@@ -855,6 +927,7 @@ export function useLeaferImageEditor() {
     mount,
     moveSelectedImagesLayer,
     panByWheelDelta,
+    pasteCopiedImagesAt,
     pasteFilesAt,
     resetView: fitToContent,
     redo,

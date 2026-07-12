@@ -8,9 +8,11 @@ import { getShortcutAction } from '../shortcuts.mjs'
 
 const CANVAS_SHORTCUTS = new Set([
   'arrange',
+  'copy',
   'delete',
   'layer-down',
   'layer-up',
+  'paste',
   'redo',
   'save',
   'undo'

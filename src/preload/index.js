@@ -53,6 +53,8 @@ const api = {
   },
   files: {
     getPath: (file) => webUtils.getPathForFile(file),
+    fetchImageFromUrl: (url) => ipcRenderer.invoke('file:fetch-image-url', url),
+    saveImageAs: (image) => ipcRenderer.invoke('file:save-image-as', image),
     showInFolder: (filePath) => ipcRenderer.invoke('file:show-in-folder', filePath)
   },
   ai: {
