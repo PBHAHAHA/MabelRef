@@ -48,6 +48,8 @@ const aiEditDialog = ref(null)
 const aiEditPrompt = ref('')
 const aiEditStatus = ref('')
 const isAiEditing = ref(false)
+const isCanvasWindowDragging = ref(false)
+const canvasWindowDragPointerId = ref(null)
 const editor = useLeaferImageEditor()
 const SETTINGS_STORAGE_KEY = 'mabelref.settings'
 const SHOW_AI_FEATURES = false
@@ -102,8 +104,36 @@ const closeImageContextMenu = () => {
   imageContextMenu.value = null
 }
 
+const endCanvasWindowDrag = () => {
+  if (!isCanvasWindowDragging.value) return
+
+  if (canvasWindowDragPointerId.value !== null) {
+    const panel = editorHost.value?.parentElement
+    if (panel?.hasPointerCapture?.(canvasWindowDragPointerId.value)) {
+      panel.releasePointerCapture(canvasWindowDragPointerId.value)
+    }
+  }
+  canvasWindowDragPointerId.value = null
+  isCanvasWindowDragging.value = false
+  window.api.windowControls.endCanvasDrag()
+}
+
+const handlePointerDown = async (event) => {
+  if (event.button !== 2) return
+
+  event.preventDefault()
+  closeImageContextMenu()
+  const dragStarted = await window.api.windowControls.beginCanvasDrag()
+  if (!dragStarted) return
+
+  isCanvasWindowDragging.value = true
+  canvasWindowDragPointerId.value = event.pointerId
+  event.currentTarget.setPointerCapture?.(event.pointerId)
+}
+
 const handleCanvasContextMenu = (event) => {
   event.preventDefault()
+  if (isCanvasWindowDragging.value) return
   if (!SHOW_AI_FEATURES) return
 
   const image = editor.selectImageAtClientPoint({ x: event.clientX, y: event.clientY })
@@ -190,11 +220,6 @@ const handleDragOver = (event) => {
 
 const handleWheel = (event) => {
   event.preventDefault()
-
-  if (!event.ctrlKey && !event.metaKey) {
-    editor.panByWheelDelta({ x: event.deltaX, y: event.deltaY })
-    return
-  }
 
   pendingWheelDelta += event.deltaY
   pendingWheelPoint = { x: event.clientX, y: event.clientY }
@@ -335,6 +360,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (pendingWheelFrame) cancelAnimationFrame(pendingWheelFrame)
+  endCanvasWindowDrag()
   editor.destroy()
 })
 </script>
@@ -348,7 +374,11 @@ onBeforeUnmount(() => {
     @dragover="handleDragOver"
     @dragleave="isDragging = false"
     @paste="handlePaste"
+    @pointerdown="handlePointerDown"
     @pointermove="handlePointerMove"
+    @pointerup="endCanvasWindowDrag"
+    @pointercancel="endCanvasWindowDrag"
+    @pointerleave="endCanvasWindowDrag"
     @contextmenu="handleCanvasContextMenu"
     @click="closeImageContextMenu"
     @wheel="handleWheel"

@@ -4,7 +4,7 @@
  * [POS]: main 进程入口，负责应用生命周期、窗口壳与 renderer 加载
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import { app, shell, BrowserWindow, ipcMain, Menu, dialog } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, Menu, dialog, screen } from 'electron'
 import { basename, dirname, extname, join } from 'path'
 import { access, mkdir, readFile, readdir, rename, rm, writeFile } from 'fs/promises'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -151,6 +151,14 @@ async function updateMabelLibrary(updater) {
 
 function registerWindowControls(window) {
   let isPinned = false
+  let canvasWindowDrag = null
+  let canvasWindowDragTimer = null
+
+  const endCanvasWindowDrag = () => {
+    if (canvasWindowDragTimer) clearInterval(canvasWindowDragTimer)
+    canvasWindowDragTimer = null
+    canvasWindowDrag = null
+  }
 
   ipcMain.handle('window:minimize', () => window.minimize())
   ipcMain.handle('window:toggle-maximize', () => {
@@ -172,6 +180,34 @@ function registerWindowControls(window) {
     applyWindowPinMode(window, isPinned)
     return isPinned
   })
+  ipcMain.handle('window:begin-canvas-drag', () => {
+    if (window.isMaximized() || window.isFullScreen()) return false
+
+    endCanvasWindowDrag()
+    const point = screen.getCursorScreenPoint()
+    canvasWindowDrag = {
+      bounds: window.getBounds(),
+      point
+    }
+    canvasWindowDragTimer = setInterval(() => {
+      if (!canvasWindowDrag || window.isDestroyed()) {
+        endCanvasWindowDrag()
+        return
+      }
+
+      const cursor = screen.getCursorScreenPoint()
+      window.setPosition(
+        Math.round(canvasWindowDrag.bounds.x + cursor.x - canvasWindowDrag.point.x),
+        Math.round(canvasWindowDrag.bounds.y + cursor.y - canvasWindowDrag.point.y)
+      )
+    }, 8)
+    return true
+  })
+  ipcMain.on('window:end-canvas-drag', () => {
+    endCanvasWindowDrag()
+  })
+  window.on('blur', endCanvasWindowDrag)
+  window.on('closed', endCanvasWindowDrag)
 }
 
 async function readMabelProjectFile(filePath) {

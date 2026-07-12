@@ -274,6 +274,8 @@ export function useLeaferImageEditor() {
       opacity: projectNode.opacity,
       visible: projectNode.visible,
       locked: projectNode.locked,
+      lockRatio: true,
+      skewable: false,
       draggable: !projectNode.locked,
       editable: !projectNode.locked
     })
@@ -292,6 +294,8 @@ export function useLeaferImageEditor() {
     node.opacity = projectNode.opacity
     node.visible = projectNode.visible
     node.locked = projectNode.locked
+    node.lockRatio = true
+    node.skewable = false
     node.draggable = !projectNode.locked
     node.editable = !projectNode.locked
   }
@@ -303,7 +307,9 @@ export function useLeaferImageEditor() {
       editor: {
         boxSelect: true,
         hover: false,
-        multipleSelect: true
+        lockRatio: true,
+        multipleSelect: true,
+        skewable: false
       }
     })
     app.value.editor.on(TRANSFORM_HISTORY_EVENTS, (event) => {
@@ -527,6 +533,8 @@ export function useLeaferImageEditor() {
         width: position.width,
         height: position.height,
         grayscale: isGrayscaleEnabled.value ? 1 : 0,
+        lockRatio: true,
+        skewable: false,
         draggable: true,
         editable: true
       })
@@ -571,6 +579,8 @@ export function useLeaferImageEditor() {
           width: source.width,
           height: source.height,
           grayscale: isGrayscaleEnabled.value ? 1 : 0,
+          lockRatio: true,
+          skewable: false,
           draggable: true,
           editable: true
         })

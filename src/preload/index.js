@@ -13,7 +13,9 @@ const api = {
     toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
     close: () => ipcRenderer.invoke('window:close'),
     setCanvasFocusMode: (enabled) => ipcRenderer.invoke('window:set-canvas-focus-mode', enabled),
-    togglePin: () => ipcRenderer.invoke('window:toggle-pin')
+    togglePin: () => ipcRenderer.invoke('window:toggle-pin'),
+    beginCanvasDrag: () => ipcRenderer.invoke('window:begin-canvas-drag'),
+    endCanvasDrag: () => ipcRenderer.send('window:end-canvas-drag')
   },
   project: {
     new: () => ipcRenderer.invoke('project:new'),
