@@ -243,21 +243,6 @@ async function readMabelProjectFile(filePath) {
 function registerProjectFiles(window) {
   ipcMain.handle('project:new', async () => ({ project: createEmptyMabelProject() }))
 
-  ipcMain.handle('project:confirm-unsaved-changes', async (_, { projectName = '未命名' } = {}) => {
-    const result = await dialog.showMessageBox(window, {
-      type: 'question',
-      title: '保存更改',
-      message: `要保存对“${projectName || '未命名'}”的更改吗？`,
-      detail: '如果不保存，最近的改动会丢失。',
-      buttons: ['保存', '不保存', '取消'],
-      defaultId: 0,
-      cancelId: 2,
-      noLink: true
-    })
-
-    return ['save', 'discard', 'cancel'][result.response] || 'cancel'
-  })
-
   ipcMain.handle('project:open', async () => {
     const result = await dialog.showOpenDialog(window, {
       title: '打开 MabelRef 项目',

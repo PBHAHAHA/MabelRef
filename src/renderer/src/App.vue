@@ -51,13 +51,19 @@ const isWindowPinned = ref(false)
 const isCanvasGrayscale = ref(false)
 const isTopBarVisible = ref(false)
 const isTopBarDragging = ref(false)
+const isWindowRightDragging = ref(false)
+const didWindowRightDragMove = ref(false)
+const suppressNextWindowContextMenu = ref(false)
+const windowRightDragPointerId = ref(null)
 const isLibraryOpen = ref(false)
 const library = ref({ workspacePath: '', rootProjects: [], categories: [] })
 const contextMenu = ref(null)
 const isSettingsDialogOpen = ref(false)
 const isProjectNameDialogOpen = ref(false)
+const isUnsavedDialogOpen = ref(false)
 const pendingProjectName = ref('未命名')
 const projectNameDialogResolver = ref(null)
+const unsavedDialogResolver = ref(null)
 const settingsSaveStatus = ref('')
 const shortcutCaptureAction = ref('')
 const shortcutSettings = ref(getShortcutSettings())
@@ -164,6 +170,19 @@ const submitProjectNameDialog = () => {
   const name = pendingProjectName.value.trim()
   if (!name) return
   closeProjectNameDialog(name)
+}
+
+const openUnsavedDialog = () =>
+  new Promise((resolve) => {
+    isUnsavedDialogOpen.value = true
+    unsavedDialogResolver.value = resolve
+  })
+
+const closeUnsavedDialog = (action = 'cancel') => {
+  isUnsavedDialogOpen.value = false
+  const resolve = unsavedDialogResolver.value
+  unsavedDialogResolver.value = null
+  resolve?.(action)
 }
 
 const minimizeWindow = () => window.api.windowControls.minimize()
@@ -343,6 +362,10 @@ const hideTopBar = () => {
 }
 
 const handleShellPointerMove = (event) => {
+  if (isWindowRightDragging.value && event.pointerId === windowRightDragPointerId.value) {
+    didWindowRightDragMove.value = true
+  }
+
   if (event.clientY <= 72) {
     showTopBar()
   } else if (event.clientY > 96 && !isTopBarDragging.value) {
@@ -362,8 +385,57 @@ const handleTitlebarPointerUp = (event) => {
   if (event.clientY > 96) hideTopBar()
 }
 
+const endWindowRightDrag = () => {
+  if (!isWindowRightDragging.value) return
+
+  isWindowRightDragging.value = false
+  didWindowRightDragMove.value = false
+  windowRightDragPointerId.value = null
+  window.api.windowControls.endCanvasDrag()
+}
+
+const handleShellPointerDown = async (event) => {
+  if (event.button !== 2) return
+
+  const shell = event.currentTarget
+  const pointerId = event.pointerId
+  const dragStarted = await window.api.windowControls.beginCanvasDrag()
+  if (!dragStarted) return
+
+  isWindowRightDragging.value = true
+  didWindowRightDragMove.value = false
+  windowRightDragPointerId.value = pointerId
+  shell.setPointerCapture?.(pointerId)
+}
+
+const handleShellPointerUp = (event) => {
+  if (event.button === 2 && didWindowRightDragMove.value) {
+    suppressNextWindowContextMenu.value = true
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
+  if (
+    windowRightDragPointerId.value !== null &&
+    event.currentTarget?.hasPointerCapture?.(windowRightDragPointerId.value)
+  ) {
+    event.currentTarget.releasePointerCapture(windowRightDragPointerId.value)
+  }
+
+  endWindowRightDrag()
+}
+
+const handleShellContextMenu = (event) => {
+  if (!suppressNextWindowContextMenu.value) return
+
+  suppressNextWindowContextMenu.value = false
+  event.preventDefault()
+  event.stopPropagation()
+}
+
 const handleWindowPointerUp = () => {
   isTopBarDragging.value = false
+  endWindowRightDrag()
 }
 
 const handleImageLoaded = (count) => {
@@ -402,9 +474,7 @@ const loadProjectIntoCanvas = async ({ filePath = '', name = '未命名', projec
 const confirmProjectChange = async () => {
   if (!hasUnsavedChanges()) return true
 
-  const action = await window.api.project.confirmUnsavedChanges({
-    projectName: projectName.value || '未命名'
-  })
+  const action = await openUnsavedDialog()
 
   if (action === 'cancel') return false
   if (action === 'discard') return true
@@ -632,14 +702,17 @@ const addProjectToLibraryCategory = async (category, project) => {
   }
 }
 
-const addCurrentProjectToCategory = async (category) => {
-  await saveProject({ categoryId: category.id })
-  if (!activeProjectPath.value) return
+const addNewCanvasToCategory = async (category) => {
+  if (!(await confirmProjectChange())) return
 
-  await addProjectToLibraryCategory(category, {
-    path: activeProjectPath.value,
-    name: projectName.value
-  })
+  const requestId = (projectOpenRequestId += 1)
+  await loadProjectIntoCanvas({
+    filePath: '',
+    name: '未命名',
+    project: createEmptyMabelProject()
+  }, requestId)
+
+  await saveProject({ categoryId: category.id })
 }
 
 const removeProjectFromLibraryCategory = async (category, project) => {
@@ -692,7 +765,7 @@ const runContextAction = async (action) => {
   if (action === 'rename-category') await startRenameLibraryCategory(menu.payload.category)
   if (action === 'remove-category') await removeLibraryCategory(menu.payload.category)
   if (action === 'create-category') await startCreateCategory()
-  if (action === 'add-current') await addCurrentProjectToCategory(menu.payload.category)
+  if (action === 'add-new-canvas') await addNewCanvasToCategory(menu.payload.category)
   if (action === 'rename-project') await startRenameLibraryProject(menu.payload.project)
   if (action === 'show-project-folder') {
     await showLibraryProjectInFolder(menu.payload.project)
@@ -725,7 +798,11 @@ onBeforeUnmount(() => {
   <div
     class="window-shell"
     :class="{ 'canvas-focus-mode': isCanvasFocusMode }"
+    @pointerdown.capture="handleShellPointerDown"
     @pointermove="handleShellPointerMove"
+    @pointerup.capture="handleShellPointerUp"
+    @pointercancel.capture="handleShellPointerUp"
+    @contextmenu.capture="handleShellContextMenu"
   >
     <header
       class="titlebar"
@@ -863,13 +940,13 @@ onBeforeUnmount(() => {
             @click.stop
           />
 
-          <div class="library-section-items">
+          <div class="library-tree">
             <div
               v-for="project in library.rootProjects"
               :key="project.path"
               role="button"
               tabindex="0"
-              class="library-project"
+              class="library-project tree-project"
               :class="{ active: project.path === activeProjectPath }"
               :draggable="!isEditingLibraryProject(project)"
               :title="project.path"
@@ -901,7 +978,7 @@ onBeforeUnmount(() => {
           <div
             v-for="category in library.categories"
             :key="category.id"
-            class="library-category"
+            class="library-category tree-category"
             :class="{ collapsed: collapsedCategories[category.id] }"
             @dragover.prevent
             @drop="handleCategoryDrop($event, category)"
@@ -938,14 +1015,13 @@ onBeforeUnmount(() => {
               <span class="category-count">{{ category.items?.length || 0 }}</span>
             </div>
 
-            <!-- Nested items -->
-            <div v-if="!collapsedCategories[category.id]" class="library-category-items">
+            <div v-if="!collapsedCategories[category.id]" class="library-category-items tree-children">
               <div
                 v-for="project in category.items"
                 :key="`${category.id}:${project.path}`"
                 role="button"
                 tabindex="0"
-                class="library-project nested"
+                class="library-project nested tree-project tree-child"
                 :class="{ active: project.path === activeProjectPath }"
                 :draggable="!isEditingLibraryProject(project)"
                 :title="project.path"
@@ -1012,9 +1088,9 @@ onBeforeUnmount(() => {
       <button
         v-if="contextMenu.type === 'category'"
         type="button"
-        @click="runContextAction('add-current')"
+        @click="runContextAction('add-new-canvas')"
       >
-        添加当前项目
+        添加新画布
       </button>
       <button
         v-if="contextMenu.type === 'category'"
@@ -1084,6 +1160,30 @@ onBeforeUnmount(() => {
           <button type="submit" :disabled="!pendingProjectName.trim()">保存</button>
         </div>
       </form>
+    </div>
+
+    <div
+      v-if="isUnsavedDialogOpen"
+      class="unsaved-dialog-backdrop"
+      @click.self="closeUnsavedDialog('cancel')"
+    >
+      <section class="unsaved-dialog" role="dialog" aria-modal="true" aria-labelledby="unsaved-title">
+        <header class="unsaved-dialog-header">
+          <div>
+            <h2 id="unsaved-title">保存更改？</h2>
+            <p>{{ projectName || '未命名' }}</p>
+          </div>
+          <button type="button" aria-label="关闭" title="关闭" @click="closeUnsavedDialog('cancel')">
+            <X :size="16" :stroke-width="2" />
+          </button>
+        </header>
+        <p class="unsaved-dialog-copy">当前画布有未保存的改动。离开前可以先保存，或直接放弃这些改动。</p>
+        <div class="unsaved-dialog-actions">
+          <button type="button" @click="closeUnsavedDialog('discard')">不保存</button>
+          <button type="button" @click="closeUnsavedDialog('cancel')">取消</button>
+          <button type="button" class="primary" @click="closeUnsavedDialog('save')">保存</button>
+        </div>
+      </section>
     </div>
 
     <div v-if="isSettingsDialogOpen" class="settings-backdrop" @click.self="closeSettingsDialog">
