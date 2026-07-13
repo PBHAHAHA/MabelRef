@@ -28,6 +28,7 @@ const api = {
     new: () => ipcRenderer.invoke('project:new'),
     open: () => ipcRenderer.invoke('project:open'),
     openPath: (filePath) => ipcRenderer.invoke('project:open-path', filePath),
+    readAsset: (payload) => ipcRenderer.invoke('project:read-asset', payload),
     save: (payload) => ipcRenderer.invoke('project:save', payload),
     onSaveProgress: (requestId, callback) => {
       const channel = `project:save-progress:${requestId}`

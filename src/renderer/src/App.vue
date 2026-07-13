@@ -450,7 +450,7 @@ const showSelectedImageInFolder = async () => {
   await canvasViewer.value?.showSelectedInFolder()
 }
 
-const loadProjectIntoCanvas = async ({ filePath = '', name = '未命名', project }, requestId) => {
+const loadProjectIntoCanvas = async ({ filePath = '', name = '未命名', packagePath = '', project }, requestId) => {
   projectError.value = ''
 
   activeProjectPath.value = filePath
@@ -466,7 +466,7 @@ const loadProjectIntoCanvas = async ({ filePath = '', name = '未命名', projec
   await nextTick()
   if (requestId !== projectOpenRequestId) return
 
-  await canvasViewer.value.loadProject(project)
+  await canvasViewer.value.loadProject(project, { packagePath })
   if (requestId !== projectOpenRequestId) return
 
   pendingProjectPath.value = ''

@@ -683,7 +683,7 @@ export function useEngineImageEditor() {
   const loadProject = async (
     project,
     onProgress = () => {},
-    { resetHistory = true, fitView = true } = {}
+    { resetHistory = true, fitView = true, packagePath = '' } = {}
   ) => {
     if (!engine) return
 
@@ -721,7 +721,18 @@ export function useEngineImageEditor() {
             phase: 'decode',
             itemName: asset.name || projectNode.name || ''
           })
-          const bytes = toBytes(asset.bytes || base64ToBytes(asset.data))
+          const bytes =
+            asset.bytes || asset.data
+              ? toBytes(asset.bytes || base64ToBytes(asset.data))
+              : toBytes(
+                  (
+                    await window.api.project.readAsset({
+                      packagePath,
+                      assetPath: asset.assetPath
+                    })
+                  ).bytes
+                )
+          if (currentLoadToken !== loadToken) return
           const decoded = await decodeDisplayBitmap(bytesToBlob(bytes, asset.mime), {
             naturalSize: {
               width: projectNode.width || 0,

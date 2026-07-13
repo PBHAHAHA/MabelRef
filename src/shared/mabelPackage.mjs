@@ -5,7 +5,7 @@
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { Buffer } from 'node:buffer'
-import { open, rename, rm } from 'node:fs/promises'
+import { open, rename, rm, stat } from 'node:fs/promises'
 import { validateMabelProject } from './mabelProject.mjs'
 
 const ZIP_LOCAL_FILE_HEADER = 0x04034b50
@@ -171,6 +171,128 @@ export function hasMabelPackageHeader(content) {
   return bytes.length >= 4 && bytes.readUInt32LE(0) === ZIP_LOCAL_FILE_HEADER
 }
 
+const readPackageFiles = (content) => {
+  const zip = toBuffer(content)
+  const entries = readPackageDirectoryFromBuffer(zip)
+  const files = new Map()
+
+  for (const [name, entry] of entries) {
+    const dataOffset = getEntryDataOffset(zip, entry)
+
+    files.set(name, zip.subarray(dataOffset, dataOffset + entry.compressedSize))
+  }
+
+  return files
+}
+
+const parsePackageManifest = (files) => {
+  const manifestBytes = files.get(MANIFEST_PATH)
+  if (!manifestBytes) throw new Error('Missing .mabel manifest')
+
+  return JSON.parse(manifestBytes.toString('utf8'))
+}
+
+const getEntryDataOffset = (zip, entry) => {
+  const localNameLength = zip.readUInt16LE(entry.localOffset + 26)
+  const localExtraLength = zip.readUInt16LE(entry.localOffset + 28)
+
+  return entry.localOffset + 30 + localNameLength + localExtraLength
+}
+
+const readPackageDirectoryFromBuffer = (zip) => {
+  const endOffset = findEndOfCentralDirectory(zip)
+  const entryCount = zip.readUInt16LE(endOffset + 10)
+  let directoryOffset = zip.readUInt32LE(endOffset + 16)
+  const entries = new Map()
+
+  for (let index = 0; index < entryCount; index += 1) {
+    if (zip.readUInt32LE(directoryOffset) !== ZIP_CENTRAL_DIRECTORY) {
+      throw new Error('Invalid .mabel package directory')
+    }
+
+    const compressedSize = zip.readUInt32LE(directoryOffset + 20)
+    const nameLength = zip.readUInt16LE(directoryOffset + 28)
+    const extraLength = zip.readUInt16LE(directoryOffset + 30)
+    const commentLength = zip.readUInt16LE(directoryOffset + 32)
+    const localOffset = zip.readUInt32LE(directoryOffset + 42)
+    const name = zip.toString('utf8', directoryOffset + 46, directoryOffset + 46 + nameLength)
+
+    entries.set(name, { compressedSize, localOffset, name })
+    directoryOffset += 46 + nameLength + extraLength + commentLength
+  }
+
+  return entries
+}
+
+async function readPackageDirectoryFromFile(filePath) {
+  const fileSize = (await stat(filePath)).size
+  const tailLength = Math.min(fileSize, 65557)
+  const handle = await open(filePath, 'r')
+
+  try {
+    const tail = Buffer.alloc(tailLength)
+    await handle.read(tail, 0, tailLength, fileSize - tailLength)
+
+    let endOffsetInTail = -1
+    for (let offset = tail.length - 22; offset >= 0; offset -= 1) {
+      if (tail.readUInt32LE(offset) === ZIP_END_OF_CENTRAL_DIRECTORY) {
+        endOffsetInTail = offset
+        break
+      }
+    }
+    if (endOffsetInTail < 0) throw new Error('Invalid .mabel package')
+
+    const entryCount = tail.readUInt16LE(endOffsetInTail + 10)
+    const directorySize = tail.readUInt32LE(endOffsetInTail + 12)
+    const directoryOffset = tail.readUInt32LE(endOffsetInTail + 16)
+    const directory = Buffer.alloc(directorySize)
+    await handle.read(directory, 0, directorySize, directoryOffset)
+
+    let offset = 0
+    const entries = new Map()
+    for (let index = 0; index < entryCount; index += 1) {
+      if (directory.readUInt32LE(offset) !== ZIP_CENTRAL_DIRECTORY) {
+        throw new Error('Invalid .mabel package directory')
+      }
+
+      const compressedSize = directory.readUInt32LE(offset + 20)
+      const nameLength = directory.readUInt16LE(offset + 28)
+      const extraLength = directory.readUInt16LE(offset + 30)
+      const commentLength = directory.readUInt16LE(offset + 32)
+      const localOffset = directory.readUInt32LE(offset + 42)
+      const name = directory.toString('utf8', offset + 46, offset + 46 + nameLength)
+
+      entries.set(name, { compressedSize, localOffset, name })
+      offset += 46 + nameLength + extraLength + commentLength
+    }
+
+    return entries
+  } finally {
+    await handle.close()
+  }
+}
+
+async function readPackageEntryFromFile(filePath, entryName) {
+  const entries = await readPackageDirectoryFromFile(filePath)
+  const entry = entries.get(entryName)
+  if (!entry) throw new Error(`Missing .mabel asset: ${entryName}`)
+
+  const handle = await open(filePath, 'r')
+  try {
+    const localHeader = Buffer.alloc(30)
+    await handle.read(localHeader, 0, localHeader.length, entry.localOffset)
+    const localNameLength = localHeader.readUInt16LE(26)
+    const localExtraLength = localHeader.readUInt16LE(28)
+    const dataOffset = entry.localOffset + 30 + localNameLength + localExtraLength
+    const bytes = Buffer.alloc(entry.compressedSize)
+
+    await handle.read(bytes, 0, bytes.length, dataOffset)
+    return bytes
+  } finally {
+    await handle.close()
+  }
+}
+
 export function encodeMabelPackage(project) {
   let offset = 0
   const entries = getPackageEntries(project).map((entry) => {
@@ -247,35 +369,8 @@ export async function writeMabelPackage(filePath, project, onProgress = () => {}
 }
 
 export function decodeMabelPackage(content) {
-  const zip = toBuffer(content)
-  const endOffset = findEndOfCentralDirectory(zip)
-  const entryCount = zip.readUInt16LE(endOffset + 10)
-  let directoryOffset = zip.readUInt32LE(endOffset + 16)
-  const files = new Map()
-
-  for (let index = 0; index < entryCount; index += 1) {
-    if (zip.readUInt32LE(directoryOffset) !== ZIP_CENTRAL_DIRECTORY) {
-      throw new Error('Invalid .mabel package directory')
-    }
-
-    const compressedSize = zip.readUInt32LE(directoryOffset + 20)
-    const nameLength = zip.readUInt16LE(directoryOffset + 28)
-    const extraLength = zip.readUInt16LE(directoryOffset + 30)
-    const commentLength = zip.readUInt16LE(directoryOffset + 32)
-    const localOffset = zip.readUInt32LE(directoryOffset + 42)
-    const name = zip.toString('utf8', directoryOffset + 46, directoryOffset + 46 + nameLength)
-    const localNameLength = zip.readUInt16LE(localOffset + 26)
-    const localExtraLength = zip.readUInt16LE(localOffset + 28)
-    const dataOffset = localOffset + 30 + localNameLength + localExtraLength
-
-    files.set(name, zip.subarray(dataOffset, dataOffset + compressedSize))
-    directoryOffset += 46 + nameLength + extraLength + commentLength
-  }
-
-  const manifestBytes = files.get(MANIFEST_PATH)
-  if (!manifestBytes) throw new Error('Missing .mabel manifest')
-
-  const manifest = JSON.parse(manifestBytes.toString('utf8'))
+  const files = readPackageFiles(content)
+  const manifest = parsePackageManifest(files)
   const project = {
     ...manifest,
     assets: manifest.assets.map((asset) => {
@@ -293,4 +388,48 @@ export function decodeMabelPackage(content) {
   }
 
   return validateMabelProject(project)
+}
+
+export function decodeMabelPackageManifest(content) {
+  const files = readPackageFiles(content)
+  const manifest = parsePackageManifest(files)
+
+  return {
+    ...manifest,
+    assets: manifest.assets.map((asset) => ({
+      id: asset.id,
+      name: asset.name,
+      mime: asset.mime,
+      originalPath: asset.originalPath || '',
+      assetPath: asset.assetPath
+    }))
+  }
+}
+
+export function readMabelPackageAsset(content, assetPath) {
+  const files = readPackageFiles(content)
+  const bytes = files.get(assetPath)
+
+  if (!bytes) throw new Error(`Missing .mabel asset: ${assetPath}`)
+  return Uint8Array.from(bytes)
+}
+
+export async function decodeMabelPackageManifestFile(filePath) {
+  const manifestBytes = await readPackageEntryFromFile(filePath, MANIFEST_PATH)
+  const manifest = JSON.parse(manifestBytes.toString('utf8'))
+
+  return {
+    ...manifest,
+    assets: manifest.assets.map((asset) => ({
+      id: asset.id,
+      name: asset.name,
+      mime: asset.mime,
+      originalPath: asset.originalPath || '',
+      assetPath: asset.assetPath
+    }))
+  }
+}
+
+export async function readMabelPackageAssetFile(filePath, assetPath) {
+  return Uint8Array.from(await readPackageEntryFromFile(filePath, assetPath))
 }

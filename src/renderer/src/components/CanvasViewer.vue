@@ -383,7 +383,7 @@ const loadingStatusText = computed(() => {
 
 const getProject = () => editor.exportProject()
 
-const loadProject = async (project) => {
+const loadProject = async (project, options = {}) => {
   const total = project.nodes.filter((node) => node.type === 'image').length
   const requestId = (projectLoadRequestId += 1)
 
@@ -398,7 +398,7 @@ const loadProject = async (project) => {
       if (progress.total > 0 && progress.loaded >= progress.total) {
         loadingProgress.value = null
       }
-    })
+    }, options)
   } finally {
     if (requestId === projectLoadRequestId) loadingProgress.value = null
   }

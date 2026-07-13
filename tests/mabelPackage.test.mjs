@@ -5,9 +5,13 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import {
   decodeMabelPackage,
+  decodeMabelPackageManifest,
+  decodeMabelPackageManifestFile,
   encodeMabelPackage,
   hasMabelPackageHeader,
   isMabelPackage,
+  readMabelPackageAsset,
+  readMabelPackageAssetFile,
   writeMabelPackage
 } from '../src/shared/mabelPackage.mjs'
 
@@ -56,6 +60,66 @@ describe('mabel package format', () => {
     assert.deepEqual(decoded.assets[0].bytes, imageBytes)
     assert.equal(decoded.assets[0].data, undefined)
     assert.deepEqual(decoded.nodes, project.nodes)
+  })
+
+  it('can read the manifest before loading asset bytes', () => {
+    const imageBytes = Uint8Array.from([1, 2, 3, 4])
+    const project = {
+      version: 1,
+      canvas: {
+        zoom: 1,
+        background: 'dot-grid'
+      },
+      assets: [
+        {
+          id: 'asset-1',
+          name: 'sample.png',
+          mime: 'image/png',
+          bytes: imageBytes,
+          originalPath: ''
+        }
+      ],
+      nodes: []
+    }
+    const encoded = encodeMabelPackage(project)
+    const manifest = decodeMabelPackageManifest(encoded)
+
+    assert.equal(manifest.assets[0].bytes, undefined)
+    assert.equal(manifest.assets[0].assetPath, 'assets/asset-1-sample.png')
+    assert.deepEqual(readMabelPackageAsset(encoded, manifest.assets[0].assetPath), imageBytes)
+  })
+
+  it('can read manifest and asset entries directly from a package file', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'mabel-package-'))
+    const filePath = join(directory, 'lazy.mabel')
+    const imageBytes = Uint8Array.from([5, 6, 7, 8])
+    const project = {
+      version: 1,
+      canvas: {
+        zoom: 1,
+        background: 'dot-grid'
+      },
+      assets: [
+        {
+          id: 'asset-1',
+          name: 'lazy.png',
+          mime: 'image/png',
+          bytes: imageBytes,
+          originalPath: ''
+        }
+      ],
+      nodes: []
+    }
+
+    try {
+      await writeMabelPackage(filePath, project)
+      const manifest = await decodeMabelPackageManifestFile(filePath)
+
+      assert.equal(manifest.assets[0].bytes, undefined)
+      assert.deepEqual(await readMabelPackageAssetFile(filePath, manifest.assets[0].assetPath), imageBytes)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('does not classify an incomplete zip header as a mabel package', () => {

@@ -41,8 +41,8 @@ export function validateMabelProject(project) {
   for (const asset of project.assets) {
     assertObject(asset, 'project.assets item')
 
-    if (!asset.data && !asset.bytes) {
-      throw new Error('project.assets item must include data or bytes')
+    if (!asset.data && !asset.bytes && !asset.assetPath) {
+      throw new Error('project.assets item must include data, bytes or assetPath')
     }
   }
 

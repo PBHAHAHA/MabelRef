@@ -12,8 +12,10 @@ import icon from '../../resources/logo.png?asset'
 import { createEmptyMabelProject, decodeMabelProject } from '../shared/mabelProject.mjs'
 import {
   decodeMabelPackage,
+  decodeMabelPackageManifestFile,
   hasMabelPackageHeader,
   isMabelPackage,
+  readMabelPackageAssetFile,
   writeMabelPackage
 } from '../shared/mabelPackage.mjs'
 import {
@@ -269,12 +271,18 @@ async function readMabelProjectFile(filePath) {
     const content = await readFile(filePath)
 
     if (isMabelPackage(content)) {
-      return decodeMabelPackage(content)
+      return {
+        project: await decodeMabelPackageManifestFile(filePath),
+        packagePath: filePath
+      }
     } else if (hasMabelPackageHeader(content)) {
       throw new Error('这个 .mabel 项目包不完整或已损坏，请尝试打开备份文件')
     }
 
-    return decodeMabelProject(content.toString('utf8'))
+    return {
+      project: decodeMabelProject(content.toString('utf8')),
+      packagePath: ''
+    }
 }
 
 function registerProjectFiles(window) {
@@ -292,24 +300,30 @@ function registerProjectFiles(window) {
     }
 
     const filePath = result.filePaths[0]
+    const opened = await readMabelProjectFile(filePath)
     return {
       canceled: false,
       filePath,
       name: basename(filePath, '.mabel'),
-      project: await readMabelProjectFile(filePath)
+      ...opened
     }
   })
 
   ipcMain.handle('project:open-path', async (_, filePath) => {
     if (!filePath) return { canceled: true }
 
+    const opened = await readMabelProjectFile(filePath)
     return {
       canceled: false,
       filePath,
       name: basename(filePath, '.mabel'),
-      project: await readMabelProjectFile(filePath)
+      ...opened
     }
   })
+
+  ipcMain.handle('project:read-asset', async (_, { packagePath, assetPath }) => ({
+    bytes: await readMabelPackageAssetFile(packagePath, assetPath)
+  }))
 
   ipcMain.handle('project:save', async (event, { filePath, project, requestId, categoryId, fileName }) => {
     let targetPath = filePath
