@@ -45,6 +45,7 @@ const lastPointer = ref(null)
 const saveProgress = ref(null)
 const statusText = ref('')
 const loadingProgress = ref(null)
+const loadingBlocksCanvas = computed(() => loadingProgress.value?.blocking !== false)
 const imageContextMenu = ref(null)
 const aiEditDialog = ref(null)
 const aiEditPrompt = ref('')
@@ -60,11 +61,11 @@ let copiedImages = []
 let pendingInternalPasteTimer = 0
 let projectLoadRequestId = 0
 
-// 加载模态期间画布只读: 遮罩挡指针，下方各 handler 挡键盘/拖放/滚轮
-const isCanvasLoading = () => loadingProgress.value !== null
+// 导入时阻断画布操作；打开项目时让图片逐张显现，不用遮罩挡住画布。
+const isCanvasLoading = () => loadingProgress.value !== null && loadingBlocksCanvas.value
 
 const trackLoadingProgress = (progress) => {
-  loadingProgress.value = progress
+  loadingProgress.value = { ...progress, blocking: loadingProgress.value?.blocking ?? true }
 }
 
 const importFiles = async (files) => {
@@ -386,7 +387,7 @@ const loadProject = async (project) => {
   const total = project.nodes.filter((node) => node.type === 'image').length
   const requestId = (projectLoadRequestId += 1)
 
-  loadingProgress.value = { loaded: 0, total }
+  loadingProgress.value = { loaded: 0, total, blocking: false }
   try {
     await editor.loadProject(project, (progress) => {
       if (requestId !== projectLoadRequestId) return
@@ -549,6 +550,7 @@ onBeforeUnmount(() => {
     <div
       v-if="loadingProgress"
       class="canvas-loading-backdrop"
+      :class="{ passive: !loadingBlocksCanvas }"
       aria-live="polite"
       @contextmenu.stop.prevent
     >

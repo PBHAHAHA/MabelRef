@@ -1301,6 +1301,16 @@ button {
   cursor: progress;
 }
 
+.canvas-loading-backdrop.passive {
+  inset: auto 20px 20px auto;
+  z-index: 20;
+  display: block;
+  width: min(280px, calc(100% - 40px));
+  background: transparent;
+  padding: 0;
+  pointer-events: none;
+}
+
 .canvas-save-backdrop {
   position: absolute;
   inset: 0;
@@ -1322,6 +1332,12 @@ button {
   padding: 16px;
   gap: 10px;
   justify-items: center;
+}
+
+.canvas-loading-backdrop.passive .canvas-loading-dialog {
+  width: 100%;
+  background: rgba(23, 29, 28, 0.88);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.28);
 }
 
 .canvas-save-dialog {

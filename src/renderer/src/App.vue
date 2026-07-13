@@ -42,6 +42,7 @@ const isMaximized = ref(false)
 const canvasViewer = ref(null)
 const canvasSessionId = ref(0)
 const activeProjectPath = ref('')
+const pendingProjectPath = ref('')
 const imageCount = ref(0)
 const projectError = ref('')
 const projectName = ref('未命名')
@@ -87,6 +88,13 @@ const SETTINGS_STORAGE_KEY = 'mabelref.settings'
 const SHOW_AI_FEATURES = false
 
 const collapsedCategories = ref({})
+const getProjectNameFromPath = (filePath) => {
+  const fileName = String(filePath || '')
+    .split(/[\\/]/)
+    .pop()
+  return fileName?.replace(/\.mabel$/i, '') || '未命名'
+}
+
 const toggleCategoryCollapse = (categoryId) => {
   collapsedCategories.value[categoryId] = !collapsedCategories.value[categoryId]
 }
@@ -436,6 +444,8 @@ const handleSelectedImageChange = (name) => {
   selectedImageName.value = name
 }
 
+const isLibraryProjectActive = (projectPath) => projectPath === (pendingProjectPath.value || activeProjectPath.value)
+
 const showSelectedImageInFolder = async () => {
   await canvasViewer.value?.showSelectedInFolder()
 }
@@ -459,6 +469,7 @@ const loadProjectIntoCanvas = async ({ filePath = '', name = '未命名', projec
   await canvasViewer.value.loadProject(project)
   if (requestId !== projectOpenRequestId) return
 
+  pendingProjectPath.value = ''
   imageCount.value = project.nodes.length
   markProjectClean()
 }
@@ -478,6 +489,7 @@ const createNewProject = async ({ skipUnsavedCheck = false } = {}) => {
   if (!skipUnsavedCheck && !(await confirmProjectChange())) return
 
   const requestId = (projectOpenRequestId += 1)
+  pendingProjectPath.value = ''
   await loadProjectIntoCanvas({
     filePath: '',
     name: '未命名',
@@ -490,6 +502,7 @@ const openProject = async () => {
 
   const requestId = (projectOpenRequestId += 1)
   canvasViewer.value?.cancelProjectLoad()
+  pendingProjectPath.value = ''
   projectError.value = ''
 
   let result
@@ -507,11 +520,15 @@ const openProject = async () => {
 }
 
 const openProjectPath = async (filePath) => {
-  if (filePath === activeProjectPath.value) return
+  if (filePath === (pendingProjectPath.value || activeProjectPath.value)) return
   if (!(await confirmProjectChange())) return
 
   const requestId = (projectOpenRequestId += 1)
   canvasViewer.value?.cancelProjectLoad()
+  pendingProjectPath.value = filePath
+  projectName.value = getProjectNameFromPath(filePath)
+  selectedImageName.value = ''
+  imageCount.value = 0
   projectError.value = ''
 
   let result
@@ -520,6 +537,7 @@ const openProjectPath = async (filePath) => {
     if (requestId !== projectOpenRequestId || result.canceled) return
   } catch (error) {
     if (requestId !== projectOpenRequestId) return
+    pendingProjectPath.value = ''
     projectError.value = error.message || '项目打开失败'
     return
   }
@@ -947,7 +965,7 @@ onBeforeUnmount(() => {
               role="button"
               tabindex="0"
               class="library-project tree-project"
-              :class="{ active: project.path === activeProjectPath }"
+              :class="{ active: isLibraryProjectActive(project.path) }"
               :draggable="!isEditingLibraryProject(project)"
               :title="project.path"
               @click="!isEditingLibraryProject(project) && openProjectPath(project.path)"
@@ -1022,7 +1040,7 @@ onBeforeUnmount(() => {
                 role="button"
                 tabindex="0"
                 class="library-project nested tree-project tree-child"
-                :class="{ active: project.path === activeProjectPath }"
+                :class="{ active: isLibraryProjectActive(project.path) }"
                 :draggable="!isEditingLibraryProject(project)"
                 :title="project.path"
                 @click="!isEditingLibraryProject(project) && openProjectPath(project.path)"

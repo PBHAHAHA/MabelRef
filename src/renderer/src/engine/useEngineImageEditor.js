@@ -342,6 +342,14 @@ export function useEngineImageEditor() {
     })
   }
 
+  const appendImportedNode = (item, position) => {
+    const node = registerPrepared(item, position)
+
+    store.addNodes([node])
+    revision.value += 1
+    return node
+  }
+
   const addFiles = async (imageFiles, onProgress = () => {}) => {
     if (!engine || imageFiles.length === 0) return 0
 
@@ -351,13 +359,32 @@ export function useEngineImageEditor() {
         const aabb = getNodeAabb(node)
         return Math.max(bottom, aabb.y + aabb.height)
       }, 0) + (store.getNodes().length > 0 ? GAP : 0)
-    const prepared = []
+    const placed = []
+    const importedNodes = []
     let processedCount = 0
 
     onProgress({ loaded: 0, total: imageFiles.length })
     for (const file of imageFiles) {
       try {
-        prepared.push(await prepareFile(file))
+        const item = await prepareFile(file)
+        const layout = packImages({
+          items: [
+            ...placed.map((placedItem) => ({
+              width: placedItem.width,
+              height: placedItem.height
+            })),
+            { width: item.decoded.width, height: item.decoded.height }
+          ],
+          viewportWidth: rect.width,
+          gap: GAP,
+          origin: ORIGIN
+        })
+        const position = layout[layout.length - 1]
+        const node = appendImportedNode(item, { x: position.x, y: position.y + startY })
+
+        placed.push({ width: item.decoded.width, height: item.decoded.height })
+        importedNodes.push(node)
+        if (importedNodes.length === 1) fitToContent()
       } catch {
         // Keep importing the rest of the dropped files if one image cannot be decoded.
       }
@@ -365,22 +392,8 @@ export function useEngineImageEditor() {
       onProgress({ loaded: processedCount, total: imageFiles.length })
     }
 
-    if (prepared.length === 0) return 0
-
-    const layout = packImages({
-      items: prepared.map((item) => ({ width: item.decoded.width, height: item.decoded.height })),
-      viewportWidth: rect.width,
-      gap: GAP,
-      origin: ORIGIN
-    })
-    const newNodes = prepared.map((item, index) =>
-      registerPrepared(item, { x: layout[index].x, y: layout[index].y + startY })
-    )
-
-    store.addNodes(newNodes)
-    revision.value += 1
-    fitToContent()
-    return newNodes.length
+    if (importedNodes.length > 1) fitToContent()
+    return importedNodes.length
   }
 
   const pasteFilesAt = async (imageFiles, clientPoint, onProgress = () => {}) => {
@@ -396,7 +409,9 @@ export function useEngineImageEditor() {
       try {
         const item = await prepareFile(file)
 
-        newNodes.push(registerPrepared(item, { x: point.x, y: nextY }))
+        const node = appendImportedNode(item, { x: point.x, y: nextY })
+
+        newNodes.push(node)
         nextY += item.decoded.height + GAP
       } catch {
         // Keep importing the rest of the pasted files if one image cannot be decoded.
@@ -405,8 +420,6 @@ export function useEngineImageEditor() {
       onProgress({ loaded: processedCount, total: imageFiles.length })
     }
 
-    store.addNodes(newNodes)
-    revision.value += 1
     return newNodes.length
   }
 
@@ -662,10 +675,9 @@ export function useEngineImageEditor() {
     isGrayscaleEnabled.value = false
   }
 
-  // Keep the current canvas visible while a replacement project is being read,
-  // but let its CPU decode loop stop as soon as another project is requested.
+  // Stop stale project work immediately so switching files never waits for the old board.
   const cancelProjectLoad = () => {
-    loadToken += 1
+    clearScene()
   }
 
   const loadProject = async (
@@ -716,6 +728,10 @@ export function useEngineImageEditor() {
               height: projectNode.height || 0
             }
           })
+          if (currentLoadToken !== loadToken) {
+            decoded.bitmap.close()
+            return
+          }
 
           engine.addImages([{ id: asset.id, bitmap: decoded.bitmap }])
           assets.set(asset.id, {
