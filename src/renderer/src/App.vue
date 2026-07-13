@@ -81,7 +81,7 @@ const editingLibraryItem = ref(null)
 const editingLibraryName = ref('')
 const isSavingProject = ref(false)
 let projectOpenRequestId = 0
-let savedProjectSnapshot = ''
+let savedProjectRevision = 0
 let unsubscribeCloseRequest = null
 const SETTINGS_STORAGE_KEY = 'mabelref.settings'
 const SHOW_AI_FEATURES = false
@@ -128,24 +128,13 @@ const nextFrame = () =>
 
 const getRequestId = () => crypto.randomUUID()
 
-const getCurrentProjectSnapshot = () => {
-  if (!canvasViewer.value) return ''
-
-  try {
-    return JSON.stringify(canvasViewer.value.getProject())
-  } catch {
-    return ''
-  }
-}
-
 const markProjectClean = () => {
-  savedProjectSnapshot = getCurrentProjectSnapshot()
+  canvasViewer.value?.markClean?.()
+  savedProjectRevision = canvasViewer.value?.getRevision?.() ?? 0
 }
 
 const hasUnsavedChanges = () => {
-  const currentSnapshot = getCurrentProjectSnapshot()
-
-  return Boolean(currentSnapshot) && currentSnapshot !== savedProjectSnapshot
+  return (canvasViewer.value?.getRevision?.() ?? 0) !== savedProjectRevision
 }
 
 const openProjectNameDialog = (name = '未命名') =>

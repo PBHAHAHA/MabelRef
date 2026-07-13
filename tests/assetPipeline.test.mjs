@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { getDisplaySize, readImageDimensions } from '../src/renderer/src/engine/assetPipeline.mjs'
+import {
+  decodeDisplayBitmap,
+  getDisplaySize,
+  readImageDimensions
+} from '../src/renderer/src/engine/assetPipeline.mjs'
 
 test('getDisplaySize keeps small images at natural size', () => {
   const size = getDisplaySize({ width: 800, height: 600 })
@@ -39,4 +43,24 @@ test('reads baseline JPEG dimensions without decoding the bitmap', () => {
   ])
 
   assert.deepEqual(readImageDimensions(bytes), { width: 1920, height: 1080 })
+})
+
+test('decodeDisplayBitmap reuses known natural size without reading blob bytes', async () => {
+  const previousCreateImageBitmap = globalThis.createImageBitmap
+
+  globalThis.createImageBitmap = async () => ({ width: 20, height: 10, close() {} })
+  try {
+    const blob = {
+      async arrayBuffer() {
+        throw new Error('arrayBuffer should not be read when naturalSize is known')
+      }
+    }
+
+    const decoded = await decodeDisplayBitmap(blob, { naturalSize: { width: 20, height: 10 } })
+
+    assert.equal(decoded.width, 20)
+    assert.equal(decoded.height, 10)
+  } finally {
+    globalThis.createImageBitmap = previousCreateImageBitmap
+  }
 })

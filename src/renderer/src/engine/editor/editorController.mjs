@@ -7,10 +7,13 @@
 import { getIdsInRect, getTopmostHit, normalizeRect } from './hitTesting.mjs'
 import {
   getHandleAt,
+  getHandleCursor,
+  getRotationAngleDelta,
+  ROTATION_HANDLE_DISTANCE_PX,
   getSelectionBounds,
-  getUniformScale,
   moveNodePatch,
-  scaleNodePatch
+  resizeNodePatch,
+  rotateNodePatch
 } from './editorTransforms.mjs'
 import { getAnchoredZoomView, getWheelZoomFactor } from '../../canvas/viewportZoom.mjs'
 
@@ -29,6 +32,7 @@ export function createEditorController({
 }) {
   let drag = null
   let marquee = null
+  let isSpacePressed = false
 
   const notifyOverlay = () => onOverlayChange?.()
 
@@ -45,8 +49,43 @@ export function createEditorController({
   const snapshotSelected = () =>
     new Map(store.getSelectedNodes().map((node) => [node.id, { ...node }]))
 
+  const getHandleAtEvent = (event) => {
+    const bounds = getSelectionBounds(store.getSelectedNodes())
+    if (!bounds) return null
+
+    const view = getView()
+
+    return getHandleAt(
+      bounds,
+      toWorld(event),
+      HANDLE_RADIUS_PX / view.zoom,
+      ROTATION_HANDLE_DISTANCE_PX / view.zoom
+    )
+  }
+
+  const setCursor = (cursor) => {
+    element.style.cursor = cursor
+  }
+
+  const updateHoverCursor = (event) => {
+    if (isSpacePressed) {
+      setCursor('grab')
+      return
+    }
+
+    const handle = getHandleAtEvent(event)
+    if (handle) {
+      setCursor(getHandleCursor(handle))
+      return
+    }
+
+    const hit = getTopmostHit(store.getNodes(), toWorld(event))
+
+    setCursor(hit ? 'move' : 'default')
+  }
+
   const handlePointerDown = (event) => {
-    if (event.button === 1) {
+    if (event.button === 1 || (event.button === 0 && isSpacePressed)) {
       drag = { mode: 'pan', clientX: event.clientX, clientY: event.clientY, view: getView() }
       element.setPointerCapture(event.pointerId)
       event.preventDefault()
@@ -55,12 +94,20 @@ export function createEditorController({
     if (event.button !== 0) return
 
     const world = toWorld(event)
-    const view = getView()
     const bounds = getSelectionBounds(store.getSelectedNodes())
-    const handle = bounds && getHandleAt(bounds, world, HANDLE_RADIUS_PX / view.zoom)
+    const handle = getHandleAtEvent(event)
 
     if (handle) {
-      drag = { mode: 'scale', handle, snapshot: snapshotSelected() }
+      setCursor(handle.id === 'rotate' ? 'grabbing' : getHandleCursor(handle))
+      drag =
+        handle.id === 'rotate'
+          ? {
+              mode: 'rotate',
+              handle,
+              start: world,
+              snapshot: snapshotSelected()
+            }
+          : { mode: 'resize', bounds, handle, snapshot: snapshotSelected() }
     } else {
       const hit = getTopmostHit(store.getNodes(), world)
 
@@ -68,8 +115,10 @@ export function createEditorController({
         if (event.shiftKey) store.toggleSelection(hit.id)
         else if (!store.isSelected(hit.id)) store.setSelection([hit.id])
         drag = { mode: 'move', start: world, snapshot: snapshotSelected() }
+        setCursor('move')
       } else {
         drag = { mode: 'marquee', start: world, additive: event.shiftKey }
+        setCursor('crosshair')
       }
     }
 
@@ -79,7 +128,10 @@ export function createEditorController({
   }
 
   const handlePointerMove = (event) => {
-    if (!drag) return
+    if (!drag) {
+      updateHoverCursor(event)
+      return
+    }
 
     if (drag.mode === 'pan') {
       const view = drag.view
@@ -89,6 +141,7 @@ export function createEditorController({
         x: view.x + event.clientX - drag.clientX,
         y: view.y + event.clientY - drag.clientY
       })
+      setCursor('grabbing')
       return
     }
 
@@ -97,6 +150,7 @@ export function createEditorController({
     if (drag.mode === 'marquee') {
       marquee = normalizeRect(drag.start, world)
       notifyOverlay()
+      setCursor('crosshair')
       return
     }
 
@@ -112,13 +166,25 @@ export function createEditorController({
       const delta = { x: world.x - drag.start.x, y: world.y - drag.start.y }
 
       drag.snapshot.forEach((node, id) => patches.set(id, moveNodePatch(node, delta)))
+      setCursor('move')
     }
-    if (drag.mode === 'scale') {
-      const scale = getUniformScale({ handle: drag.handle, point: world })
+    if (drag.mode === 'resize') {
+      drag.snapshot.forEach((node, id) =>
+        patches.set(id, resizeNodePatch(node, drag.bounds, drag.handle, world))
+      )
+      setCursor(getHandleCursor(drag.handle))
+    }
+    if (drag.mode === 'rotate') {
+      const delta = getRotationAngleDelta({
+        center: drag.handle.center,
+        start: drag.start,
+        point: world
+      })
 
       drag.snapshot.forEach((node, id) =>
-        patches.set(id, scaleNodePatch(node, drag.handle.anchor, scale))
+        patches.set(id, rotateNodePatch(node, delta, drag.handle.center))
       )
+      setCursor('grabbing')
     }
 
     store.applyPatches(patches)
@@ -145,6 +211,7 @@ export function createEditorController({
     }
 
     drag = null
+    updateHoverCursor(event)
   }
 
   const handleWheel = (event) => {
@@ -163,10 +230,30 @@ export function createEditorController({
   }
 
   const handleKeyDown = (event) => {
-    if (event.key === 'Delete' || event.key === 'Backspace') {
+    if (event.code === 'Space' && !event.repeat) {
+      isSpacePressed = true
+      setCursor('grab')
+      event.preventDefault()
+      return
+    }
+
+    if (bindKeyboard && (event.key === 'Delete' || event.key === 'Backspace')) {
       onHistoryPoint?.()
       store.removeSelected()
     }
+  }
+
+  const handleKeyUp = (event) => {
+    if (event.code === 'Space') {
+      isSpacePressed = false
+      setCursor('default')
+      event.preventDefault()
+    }
+  }
+
+  const handleBlur = () => {
+    isSpacePressed = false
+    setCursor('default')
   }
 
   element.addEventListener('pointerdown', handlePointerDown)
@@ -174,7 +261,9 @@ export function createEditorController({
   element.addEventListener('pointerup', handlePointerUp)
   element.addEventListener('pointercancel', handlePointerUp)
   if (bindWheel) element.addEventListener('wheel', handleWheel, { passive: false })
-  if (bindKeyboard) window.addEventListener('keydown', handleKeyDown)
+  window.addEventListener('keydown', handleKeyDown)
+  window.addEventListener('keyup', handleKeyUp)
+  window.addEventListener('blur', handleBlur)
 
   return {
     getMarquee: () => marquee,
@@ -185,7 +274,10 @@ export function createEditorController({
       element.removeEventListener('pointerup', handlePointerUp)
       element.removeEventListener('pointercancel', handlePointerUp)
       if (bindWheel) element.removeEventListener('wheel', handleWheel)
-      if (bindKeyboard) window.removeEventListener('keydown', handleKeyDown)
+      setCursor('default')
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', handleBlur)
     }
   }
 }

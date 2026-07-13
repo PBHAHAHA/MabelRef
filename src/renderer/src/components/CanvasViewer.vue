@@ -294,6 +294,12 @@ const handleWheel = (event) => {
 }
 
 const handleKeydown = (event) => {
+  if (event.code === 'Space') {
+    event.preventDefault()
+    closeImageContextMenu()
+    return
+  }
+
   if (isCanvasLoading()) return
 
   const shortcut = getCanvasShortcut(event, props.shortcuts)
@@ -363,6 +369,15 @@ const loadingPercent = computed(() => {
   if (!progress || progress.total === 0) return 100
 
   return Math.round((Math.min(progress.loaded, progress.total) / progress.total) * 100)
+})
+
+const loadingStatusText = computed(() => {
+  const progress = loadingProgress.value
+  if (!progress) return ''
+
+  const loaded = Math.min(progress.loaded, progress.total)
+
+  return `${loaded} / ${progress.total}`
 })
 
 const getProject = () => editor.exportProject()
@@ -542,10 +557,7 @@ onBeforeUnmount(() => {
         <div class="canvas-loading-bar">
           <span :style="{ width: `${loadingPercent}%` }"></span>
         </div>
-        <span class="canvas-loading-count"
-          >{{ Math.min(loadingProgress.loaded, loadingProgress.total) }} /
-          {{ loadingProgress.total }}</span
-        >
+        <span class="canvas-loading-count">{{ loadingStatusText }}</span>
       </div>
     </div>
 

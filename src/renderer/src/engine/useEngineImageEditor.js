@@ -11,7 +11,7 @@ import { getSelectedImageLayout } from '../canvas/selectedImageLayout.mjs'
 import { getFitView } from '../canvas/viewportFit.mjs'
 import { getAnchoredZoomView, getPannedView } from '../canvas/viewportZoom.mjs'
 import { MABEL_PROJECT_FORMAT_VERSION } from '../../../shared/mabelProject.mjs'
-import { decodeDisplayBitmap } from './assetPipeline.mjs'
+import { decodeDisplayBitmap, readImageDimensions } from './assetPipeline.mjs'
 import { createEngineClient } from './engineClient.mjs'
 import { createEditorController } from './editor/editorController.mjs'
 import { getNodeAabb, getTopmostHit } from './editor/hitTesting.mjs'
@@ -56,6 +56,7 @@ export function useEngineImageEditor() {
   const selectedOriginalPath = ref('')
   const imageContextMenuRequest = ref(null)
   const isGrayscaleEnabled = ref(false)
+  const revision = ref(0)
 
   const store = createSceneStore()
   const assets = new Map()
@@ -163,8 +164,42 @@ export function useEngineImageEditor() {
     }
   }
 
+  const exportHistorySnapshot = () => ({
+    version: MABEL_PROJECT_FORMAT_VERSION,
+    canvas: {
+      zoom: zoom.value,
+      background: 'dot-grid'
+    },
+    nodes: store.getNodes().map((node) => ({
+      id: node.id,
+      type: 'image',
+      assetId: node.assetId,
+      name: assets.get(node.assetId)?.name || '',
+      x: node.x || 0,
+      y: node.y || 0,
+      width: node.width || 1,
+      height: node.height || 1,
+      scaleX: node.scaleX ?? 1,
+      scaleY: node.scaleY ?? 1,
+      rotation: node.rotation || 0,
+      skewX: 0,
+      skewY: 0,
+      grayscale: node.grayscale || 0,
+      opacity: node.opacity ?? 1,
+      visible: node.visible ?? true,
+      locked: node.locked ?? false
+    }))
+  })
+
   const rememberCanvasState = () => {
-    if (!restoringHistory) history.push(exportProject())
+    if (restoringHistory) return
+
+    history.push(exportHistorySnapshot())
+    revision.value += 1
+  }
+
+  const markClean = () => {
+    revision.value = 0
   }
 
   // ---- 资产与纹理 ----
@@ -200,6 +235,11 @@ export function useEngineImageEditor() {
     grayscale: projectNode.grayscale || 0,
     visible: projectNode.visible ?? true,
     locked: projectNode.locked ?? false
+  })
+
+  const createHiddenNodeRecord = (projectNode) => ({
+    ...createNodeRecord(projectNode),
+    visible: false
   })
 
   // ---- 挂载 ----
@@ -269,7 +309,7 @@ export function useEngineImageEditor() {
 
   const prepareFile = async (file) => {
     const bytes = new Uint8Array(await file.arrayBuffer())
-    const decoded = await decodeDisplayBitmap(file)
+    const decoded = await decodeDisplayBitmap(file, { naturalSize: readImageDimensions(bytes) })
 
     return {
       assetId: getId('asset'),
@@ -338,6 +378,7 @@ export function useEngineImageEditor() {
     )
 
     store.addNodes(newNodes)
+    revision.value += 1
     fitToContent()
     return newNodes.length
   }
@@ -365,6 +406,7 @@ export function useEngineImageEditor() {
     }
 
     store.addNodes(newNodes)
+    revision.value += 1
     return newNodes.length
   }
 
@@ -409,6 +451,7 @@ export function useEngineImageEditor() {
     }
 
     store.addNodes(newNodes)
+    revision.value += 1
     return newNodes.length
   }
 
@@ -439,7 +482,6 @@ export function useEngineImageEditor() {
     rememberCanvasState()
     const removedCount = store.removeSelected()
 
-    removeOrphanAssets()
     return removedCount
   }
 
@@ -510,6 +552,7 @@ export function useEngineImageEditor() {
     const nodes = store.getNodes()
     if (nodes.length === 0) return false
 
+    rememberCanvasState()
     isGrayscaleEnabled.value = !isGrayscaleEnabled.value
     store.applyPatches(
       new Map(nodes.map((node) => [node.id, { grayscale: isGrayscaleEnabled.value ? 1 : 0 }]))
@@ -575,7 +618,6 @@ export function useEngineImageEditor() {
         ]
       ])
     )
-    removeOrphanAssets()
     return true
   }
 
@@ -643,63 +685,102 @@ export function useEngineImageEditor() {
 
     const assetMap = new Map(project.assets.map((asset) => [asset.id, asset]))
     const imageNodes = project.nodes.filter((projectNode) => projectNode.type === 'image')
+    const loadedNodeIds = new Set()
     let loadedCount = 0
 
-    onProgress({ loaded: 0, total: imageNodes.length })
+    onProgress({ loaded: 0, total: imageNodes.length, phase: 'prepare' })
     await nextFrame()
 
-    // Match direct file imports: finish every CPU decode first, then submit the
-    // prepared display bitmaps in the same one-image-per-worker-message sequence.
-    // The progress dialog is therefore never coupled to the GPU upload queue.
-    const prepared = []
+    const pendingNodes = imageNodes.map(createHiddenNodeRecord)
+
+    store.setNodes(pendingNodes)
+    if (fitView) fitToContent()
+
     for (const projectNode of imageNodes) {
       if (currentLoadToken !== loadToken) return
 
       const asset = assetMap.get(projectNode.assetId)
       if (asset) {
         try {
+          onProgress({
+            loaded: loadedCount,
+            current: loadedCount + 1,
+            total: imageNodes.length,
+            phase: 'decode',
+            itemName: asset.name || projectNode.name || ''
+          })
           const bytes = toBytes(asset.bytes || base64ToBytes(asset.data))
-          const decoded = await decodeDisplayBitmap(bytesToBlob(bytes, asset.mime))
-          prepared.push({ projectNode, asset, bytes, decoded })
+          const decoded = await decodeDisplayBitmap(bytesToBlob(bytes, asset.mime), {
+            naturalSize: {
+              width: projectNode.width || 0,
+              height: projectNode.height || 0
+            }
+          })
+
+          engine.addImages([{ id: asset.id, bitmap: decoded.bitmap }])
+          assets.set(asset.id, {
+            bytes,
+            mime: asset.mime,
+            name: asset.name,
+            originalPath: asset.originalPath || ''
+          })
+          onProgress({
+            loaded: loadedCount,
+            current: loadedCount + 1,
+            total: imageNodes.length,
+            phase: 'render',
+            itemName: asset.name || projectNode.name || ''
+          })
+          store.applyPatches(new Map([[projectNode.id, { visible: projectNode.visible ?? true }]]))
+          loadedNodeIds.add(projectNode.id)
         } catch {
           // Keep loading the rest of the project if one image cannot be decoded.
         }
       }
 
       loadedCount += 1
-      onProgress({ loaded: loadedCount, total: imageNodes.length })
+      onProgress({
+        loaded: loadedCount,
+        current: loadedCount,
+        total: imageNodes.length,
+        phase: 'loaded',
+        itemName: asset?.name || projectNode.name || ''
+      })
+      await nextFrame()
     }
 
     if (currentLoadToken !== loadToken) return
-    const newNodes = prepared.map((item) => {
-      engine.addImages([{ id: item.asset.id, bitmap: item.decoded.bitmap }])
-      assets.set(item.asset.id, {
-        bytes: item.bytes,
-        mime: item.asset.mime,
-        name: item.asset.name,
-        originalPath: item.asset.originalPath || ''
-      })
-      return createNodeRecord(item.projectNode)
+    onProgress({
+      loaded: loadedCount,
+      current: loadedCount,
+      total: imageNodes.length,
+      phase: 'finalize'
     })
-    store.addNodes(newNodes)
-
+    store.setNodes(store.getNodes().filter((node) => loadedNodeIds.has(node.id)))
     const nodes = store.getNodes()
 
     isGrayscaleEnabled.value = nodes.length > 0 && nodes.every((node) => Boolean(node.grayscale))
-    if (fitView) fitToContent()
-    else applyView({ nextZoom: previousView.zoom, position: previousView.position })
+    if (!fitView) applyView({ nextZoom: previousView.zoom, position: previousView.position })
+    onProgress({
+      loaded: imageNodes.length,
+      current: imageNodes.length,
+      total: imageNodes.length,
+      phase: 'done'
+    })
   }
 
   const restoreProjectSnapshot = async (project) => {
-    const assetMap = new Map(project.assets.map((asset) => [asset.id, asset]))
+    const assetMap = new Map((project.assets || []).map((asset) => [asset.id, asset]))
     const nextNodes = []
 
     for (const projectNode of project.nodes.filter((node) => node.type === 'image')) {
-      const asset = assetMap.get(projectNode.assetId)
+      const asset = assetMap.get(projectNode.assetId) || assets.get(projectNode.assetId)
       if (!asset) continue
 
       try {
         if (!assets.has(asset.id)) {
+          if (!asset.bytes && !asset.data) continue
+
           await uploadAsset({
             assetId: asset.id,
             bytes: toBytes(asset.bytes || base64ToBytes(asset.data)),
@@ -716,18 +797,18 @@ export function useEngineImageEditor() {
 
     store.setSelection([])
     store.setNodes(nextNodes)
-    removeOrphanAssets()
     isGrayscaleEnabled.value =
       nextNodes.length > 0 && nextNodes.every((node) => Boolean(node.grayscale))
   }
 
   const undo = async () => {
-    const snapshot = history.undo(exportProject())
+    const snapshot = history.undo(exportHistorySnapshot())
     if (!snapshot) return false
 
     restoringHistory = true
     try {
       await restoreProjectSnapshot(snapshot)
+      revision.value += 1
     } finally {
       restoringHistory = false
     }
@@ -735,12 +816,13 @@ export function useEngineImageEditor() {
   }
 
   const redo = async () => {
-    const snapshot = history.redo(exportProject())
+    const snapshot = history.redo(exportHistorySnapshot())
     if (!snapshot) return false
 
     restoringHistory = true
     try {
       await restoreProjectSnapshot(snapshot)
+      revision.value += 1
     } finally {
       restoringHistory = false
     }
@@ -779,11 +861,13 @@ export function useEngineImageEditor() {
     pasteFilesAt,
     resetView: fitToContent,
     redo,
+    markClean,
     getImageEditSource,
     replaceImageWithBytes,
     selectImageAtClientPoint,
     selectedImageName,
     selectedOriginalPath,
+    revision,
     showSelectedInFolder: () => window.api.files.showInFolder(selectedOriginalPath.value),
     toggleAllImagesGrayscale,
     undo,

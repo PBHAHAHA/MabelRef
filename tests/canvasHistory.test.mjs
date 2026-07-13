@@ -55,4 +55,19 @@ describe('canvas history', () => {
 
     assert.equal(history.redo({ nodes: [{ id: 'b' }] }), null)
   })
+
+  it('can store lightweight snapshots without asset bytes', () => {
+    const history = createCanvasHistory()
+    const snapshot = {
+      nodes: [{ id: 'node-1', assetId: 'asset-1', x: 10 }],
+      version: 1
+    }
+
+    history.push(snapshot)
+
+    const restored = history.undo()
+
+    assert.deepEqual(restored, snapshot)
+    assert.equal('assets' in restored, false)
+  })
 })

@@ -1366,6 +1366,15 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+.canvas-loading-file {
+  overflow: hidden;
+  max-width: 100%;
+  color: rgba(210, 224, 216, 0.45);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .canvas-ai-edit-backdrop {
   position: fixed;
   inset: 0;

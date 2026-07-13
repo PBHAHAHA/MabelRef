@@ -5,7 +5,13 @@
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { getNodeCorners } from './hitTesting.mjs'
-import { getCornerHandles, getSelectionBounds } from './editorTransforms.mjs'
+import {
+  getCornerHandles,
+  getEdgeHandles,
+  getRotationHandle,
+  ROTATION_HANDLE_DISTANCE_PX,
+  getSelectionBounds
+} from './editorTransforms.mjs'
 
 const ACCENT = '#4f8cff'
 const HANDLE_SIZE = 8
@@ -52,7 +58,19 @@ export function createSelectionOverlay(canvas) {
         ctx.lineWidth = 1
         ctx.strokeRect(topLeft.x, topLeft.y, bounds.width * view.zoom, bounds.height * view.zoom)
 
-        for (const handle of getCornerHandles(bounds)) {
+        const rotationHandle = getRotationHandle(bounds, ROTATION_HANDLE_DISTANCE_PX / view.zoom)
+        const rotationPoint = toScreen(view, rotationHandle)
+        const rotationCenterTop = toScreen(view, {
+          x: bounds.x + bounds.width / 2,
+          y: bounds.y
+        })
+
+        ctx.beginPath()
+        ctx.moveTo(rotationCenterTop.x, rotationCenterTop.y)
+        ctx.lineTo(rotationPoint.x, rotationPoint.y)
+        ctx.stroke()
+
+        for (const handle of [...getCornerHandles(bounds), ...getEdgeHandles(bounds)]) {
           const point = toScreen(view, handle)
 
           ctx.fillStyle = '#ffffff'
@@ -70,6 +88,13 @@ export function createSelectionOverlay(canvas) {
             HANDLE_SIZE
           )
         }
+
+        ctx.beginPath()
+        ctx.arc(rotationPoint.x, rotationPoint.y, HANDLE_SIZE / 2, 0, Math.PI * 2)
+        ctx.fillStyle = '#ffffff'
+        ctx.strokeStyle = ACCENT
+        ctx.fill()
+        ctx.stroke()
       }
 
       if (marquee) {

@@ -126,9 +126,11 @@ const decodeWithImageElement = (blob) =>
     image.src = url
   })
 
-export async function decodeDisplayBitmap(blob) {
-  const bytes = new Uint8Array(await blob.arrayBuffer())
-  const naturalSize = readImageDimensions(bytes)
+export async function decodeDisplayBitmap(blob, options = {}) {
+  const naturalSize =
+    options.naturalSize?.width > 0 && options.naturalSize?.height > 0
+      ? options.naturalSize
+      : readImageDimensions(new Uint8Array(await blob.arrayBuffer()))
 
   if (naturalSize) {
     const display = getDisplaySize(naturalSize)
