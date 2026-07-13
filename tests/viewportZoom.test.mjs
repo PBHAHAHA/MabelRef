@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   getAnchoredZoomView,
-  getManualWheelZoomInteractionConfig,
   getPannedView,
   getWheelZoomFactor
 } from '../src/renderer/src/canvas/viewportZoom.mjs'
@@ -46,17 +45,6 @@ describe('viewport anchored zoom', () => {
     assert.ok(getWheelZoomFactor(-10) < 1.06)
     assert.ok(getWheelZoomFactor(10) < 1)
     assert.ok(getWheelZoomFactor(10) > 0.94)
-  })
-
-  it('disables Leafer built-in wheel zoom so manual anchored zoom is the only zoom path', () => {
-    assert.deepEqual(getManualWheelZoomInteractionConfig(), {
-      wheel: {
-        disabled: true
-      },
-      zoom: {
-        disabled: true
-      }
-    })
   })
 
   it('moves the viewport opposite to trackpad wheel deltas while panning', () => {

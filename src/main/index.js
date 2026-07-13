@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 electron 的 app/BrowserWindow/ipcMain/shell/dialog、mabelPackage、windowFocusMode、resources/logo.png 与 fs/path 管理桌面窗口、工作空间、项目文件对话框、文件定位和系统事件
- * [OUTPUT]: 创建无边框主窗口并提供窗口控制/画布专注模式 IPC、工作空间分类文件夹、文件定位 IPC 与 .mabel 项目文件保存/打开 IPC
+ * [OUTPUT]: 创建无边框主窗口并提供窗口控制/画布专注模式 IPC、工作空间分类文件夹、文件定位 IPC、.mabel 项目文件保存/打开 IPC 与 Ctrl+Alt+B 引擎压测窗口
  * [POS]: main 进程入口，负责应用生命周期、窗口壳与 renderer 加载
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -723,6 +723,32 @@ function registerAiActions() {
   })
 }
 
+function createBenchWindow() {
+  const benchWindow = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    backgroundColor: '#14161b',
+    autoHideMenuBar: true,
+    title: 'MabelRef Engine Bench'
+  })
+
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    benchWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/bench.html`)
+  } else {
+    benchWindow.loadFile(join(__dirname, '../renderer/bench.html'))
+  }
+}
+
+function registerBenchShortcut(window) {
+  window.webContents.on('before-input-event', (_, input) => {
+    const hasModifier = input.control || input.meta
+
+    if (input.type === 'keyDown' && hasModifier && input.alt && input.code === 'KeyB') {
+      createBenchWindow()
+    }
+  })
+}
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 900,
@@ -740,6 +766,7 @@ function createWindow() {
   })
 
   Menu.setApplicationMenu(null)
+  registerBenchShortcut(mainWindow)
   registerWindowControls(mainWindow)
   registerProjectFiles(mainWindow)
   registerMabelLibrary()

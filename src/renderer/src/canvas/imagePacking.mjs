@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖图片自然宽高、画布可见宽度与间距配置
  * [OUTPUT]: 对外提供保持原始尺寸的紧凑自动排版坐标
- * [POS]: renderer/canvas 的纯排版算法，供 Leafer 图片导入流程调用
+ * [POS]: renderer/canvas 的纯排版算法，供 engine/useEngineImageEditor 图片导入流程调用
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 export function packImages({ items, viewportWidth, gap, origin }) {

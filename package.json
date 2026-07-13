@@ -22,7 +22,6 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
-    "leafer-editor": "^2.1.8",
     "lucide-vue-next": "^0.577.0"
   },
   "devDependencies": {

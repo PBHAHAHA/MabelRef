@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 画布项目快照
  * [OUTPUT]: 提供简单的撤销历史栈，按后进先出返回深拷贝快照
- * [POS]: renderer/canvas 的历史管理纯工具，被 useLeaferImageEditor 消费
+ * [POS]: renderer/canvas 的历史管理纯工具，被 engine/useEngineImageEditor 消费
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 const DEFAULT_LIMIT = 80

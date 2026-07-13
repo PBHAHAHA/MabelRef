@@ -79,6 +79,7 @@ const newCategoryName = ref('')
 const newCategoryInput = ref(null)
 const editingLibraryItem = ref(null)
 const editingLibraryName = ref('')
+const isSavingProject = ref(false)
 let projectOpenRequestId = 0
 let savedProjectSnapshot = ''
 let unsubscribeCloseRequest = null
@@ -467,6 +468,8 @@ const loadProjectIntoCanvas = async ({ filePath = '', name = '未命名', projec
   if (requestId !== projectOpenRequestId) return
 
   await canvasViewer.value.loadProject(project)
+  if (requestId !== projectOpenRequestId) return
+
   imageCount.value = project.nodes.length
   markProjectClean()
 }
@@ -497,6 +500,7 @@ const openProject = async () => {
   if (!(await confirmProjectChange())) return
 
   const requestId = (projectOpenRequestId += 1)
+  canvasViewer.value?.cancelProjectLoad()
   projectError.value = ''
 
   let result
@@ -518,6 +522,7 @@ const openProjectPath = async (filePath) => {
   if (!(await confirmProjectChange())) return
 
   const requestId = (projectOpenRequestId += 1)
+  canvasViewer.value?.cancelProjectLoad()
   projectError.value = ''
 
   let result
@@ -535,49 +540,55 @@ const openProjectPath = async (filePath) => {
 }
 
 const saveProject = async ({ categoryId = '' } = {}) => {
-  if (!canvasViewer.value) return false
-  let fileName = ''
+  if (!canvasViewer.value || isSavingProject.value) return false
 
-  if (!activeProjectPath.value && !categoryId && library.value.workspacePath) {
-    fileName = await openProjectNameDialog(projectName.value || '未命名')
-    if (!fileName) return false
-  }
-
-  canvasViewer.value.markSaving()
-  await nextFrame()
-
-  const requestId = getRequestId()
-  const unsubscribe = window.api.project.onSaveProgress(requestId, (progress) => {
-    canvasViewer.value?.updateSaveProgress(progress)
-  })
-
-  let result
+  isSavingProject.value = true
   try {
-    result = await window.api.project.save({
-      filePath: activeProjectPath.value,
-      categoryId,
-      fileName,
-      requestId,
-      project: canvasViewer.value.getProject()
-    })
-  } catch (error) {
-    projectError.value = error.message || '项目保存失败'
-    canvasViewer.value.markSaveCanceled()
-    return false
-  } finally {
-    unsubscribe()
-  }
+    let fileName = ''
 
-  if (result.canceled) {
-    canvasViewer.value.markSaveCanceled()
-    return false
+    if (!activeProjectPath.value && !categoryId && library.value.workspacePath) {
+      fileName = await openProjectNameDialog(projectName.value || '未命名')
+      if (!fileName) return false
+    }
+
+    canvasViewer.value.markSaving()
+    await nextFrame()
+
+    const requestId = getRequestId()
+    const unsubscribe = window.api.project.onSaveProgress(requestId, (progress) => {
+      canvasViewer.value?.updateSaveProgress(progress)
+    })
+
+    let result
+    try {
+      result = await window.api.project.save({
+        filePath: activeProjectPath.value,
+        categoryId,
+        fileName,
+        requestId,
+        project: canvasViewer.value.getProject()
+      })
+    } catch (error) {
+      projectError.value = error.message || '项目保存失败'
+      canvasViewer.value.markSaveCanceled()
+      return false
+    } finally {
+      unsubscribe()
+    }
+
+    if (result.canceled) {
+      canvasViewer.value.markSaveCanceled()
+      return false
+    }
+    activeProjectPath.value = result.filePath
+    projectName.value = result.name || projectName.value
+    canvasViewer.value.markSaved()
+    markProjectClean()
+    await refreshLibrary()
+    return true
+  } finally {
+    isSavingProject.value = false
   }
-  activeProjectPath.value = result.filePath
-  projectName.value = result.name || projectName.value
-  canvasViewer.value.markSaved()
-  markProjectClean()
-  await refreshLibrary()
-  return true
 }
 
 const handleCloseRequest = async () => {

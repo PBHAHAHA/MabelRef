@@ -1,11 +1,11 @@
 <script setup>
 /**
- * [INPUT]: 依赖 useLeaferImageEditor、clipboardImages、directoryEntries、focusMode prop 与用户拖入/粘贴的本地图片 File、图片文件夹或 .mabel File
- * [OUTPUT]: 对外提供基于 Leafer Editor 的多图片画布查看器、拖拽导入文件/文件夹/打开项目引导、专注模式画布、按鼠标位置粘贴图片、选中图片快捷排版、原始路径定位、加载保存状态与项目快照读写能力
+ * [INPUT]: 依赖 engine/useEngineImageEditor、clipboardImages、directoryEntries、focusMode prop 与用户拖入/粘贴的本地图片 File、图片文件夹或 .mabel File
+ * [OUTPUT]: 对外提供基于自研 WebGPU 引擎的多图片画布查看器、拖拽导入文件/文件夹/打开项目引导、专注模式画布、按鼠标位置粘贴图片、选中图片快捷排版、原始路径定位、模态加载进度弹窗（导入/打开项目期间阻断画布交互）、保存状态与项目快照读写能力
  * [POS]: renderer/components 的核心画布容器，被 App.vue 消费
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { FolderUp, Maximize, Sparkles, X } from 'lucide-vue-next'
 import logoUrl from '../assets/logo1.png'
 import { getCanvasShortcut } from '../canvas/canvasShortcuts.mjs'
@@ -14,7 +14,7 @@ import { getClipboardImageFiles } from '../canvas/clipboardImages.mjs'
 import { collectDroppedFiles } from '../canvas/directoryEntries.mjs'
 import { dataUrlToFile, getDroppedImageUrls } from '../canvas/droppedImageSources.mjs'
 import { getWheelZoomFactor } from '../canvas/viewportZoom.mjs'
-import { useLeaferImageEditor } from '../canvas/useLeaferImageEditor'
+import { useEngineImageEditor } from '../engine/useEngineImageEditor'
 
 const emit = defineEmits([
   'image-loaded',
@@ -44,12 +44,13 @@ const isDragging = ref(false)
 const lastPointer = ref(null)
 const saveProgress = ref(null)
 const statusText = ref('')
+const loadingProgress = ref(null)
 const imageContextMenu = ref(null)
 const aiEditDialog = ref(null)
 const aiEditPrompt = ref('')
 const aiEditStatus = ref('')
 const isAiEditing = ref(false)
-const editor = useLeaferImageEditor()
+const editor = useEngineImageEditor()
 const SETTINGS_STORAGE_KEY = 'mabelref.settings'
 const SHOW_AI_FEATURES = false
 let pendingWheelDelta = 0
@@ -57,12 +58,27 @@ let pendingWheelPoint = null
 let pendingWheelFrame = 0
 let copiedImages = []
 let pendingInternalPasteTimer = 0
+let projectLoadRequestId = 0
+
+// 加载模态期间画布只读: 遮罩挡指针，下方各 handler 挡键盘/拖放/滚轮
+const isCanvasLoading = () => loadingProgress.value !== null
+
+const trackLoadingProgress = (progress) => {
+  loadingProgress.value = progress
+}
 
 const importFiles = async (files) => {
-  const count = await editor.addFiles(files)
+  if (files.length === 0) return 0
 
-  if (count > 0) emit('image-loaded', count)
-  return count
+  loadingProgress.value = { loaded: 0, total: files.length }
+  try {
+    const count = await editor.addFiles(files, trackLoadingProgress)
+
+    if (count > 0) emit('image-loaded', count)
+    return count
+  } finally {
+    loadingProgress.value = null
+  }
 }
 
 const getDroppedImageUrlFiles = async (dataTransfer) => {
@@ -90,6 +106,8 @@ const getDroppedImageUrlFiles = async (dataTransfer) => {
 const handleDrop = async (event) => {
   event.preventDefault()
   isDragging.value = false
+  if (isCanvasLoading() || saveProgress.value !== null) return
+
   const projectPath = getDroppedMabelProjectPath(
     [...event.dataTransfer.files],
     window.api.files.getPath
@@ -119,10 +137,17 @@ const getPastePoint = () => {
 }
 
 const pasteImageFiles = async (files, point = getPastePoint()) => {
-  const count = await editor.pasteFilesAt(files, point)
+  if (files.length === 0) return 0
 
-  if (count > 0) emit('image-loaded', count)
-  return count
+  loadingProgress.value = { loaded: 0, total: files.length }
+  try {
+    const count = await editor.pasteFilesAt(files, point, trackLoadingProgress)
+
+    if (count > 0) emit('image-loaded', count)
+    return count
+  } finally {
+    loadingProgress.value = null
+  }
 }
 
 const pasteCopiedImages = async (point = getPastePoint()) => {
@@ -133,6 +158,8 @@ const pasteCopiedImages = async (point = getPastePoint()) => {
 }
 
 const handlePaste = async (event) => {
+  if (isCanvasLoading()) return
+
   if (pendingInternalPasteTimer) {
     clearTimeout(pendingInternalPasteTimer)
     pendingInternalPasteTimer = 0
@@ -247,6 +274,7 @@ const handleDragOver = (event) => {
 
 const handleWheel = (event) => {
   event.preventDefault()
+  if (isCanvasLoading()) return
 
   pendingWheelDelta += event.deltaY
   pendingWheelPoint = { x: event.clientX, y: event.clientY }
@@ -266,6 +294,8 @@ const handleWheel = (event) => {
 }
 
 const handleKeydown = (event) => {
+  if (isCanvasLoading()) return
+
   const shortcut = getCanvasShortcut(event, props.shortcuts)
   if (!shortcut) return
 
@@ -328,15 +358,40 @@ const showSelectedInFolder = async () => {
   await editor.showSelectedInFolder()
 }
 
+const loadingPercent = computed(() => {
+  const progress = loadingProgress.value
+  if (!progress || progress.total === 0) return 100
+
+  return Math.round((Math.min(progress.loaded, progress.total) / progress.total) * 100)
+})
+
 const getProject = () => editor.exportProject()
 
 const loadProject = async (project) => {
   const total = project.nodes.filter((node) => node.type === 'image').length
-  statusText.value = total > 0 ? `正在加载 0/${total}` : '正在加载'
-  await editor.loadProject(project, ({ loaded, total }) => {
-    statusText.value = `正在加载 ${loaded}/${total}`
-  })
-  statusText.value = ''
+  const requestId = (projectLoadRequestId += 1)
+
+  loadingProgress.value = { loaded: 0, total }
+  try {
+    await editor.loadProject(project, (progress) => {
+      if (requestId !== projectLoadRequestId) return
+
+      loadingProgress.value = progress
+      // At this point every image has been decoded and submitted to the render worker.
+      // Do not keep the interaction-blocking dialog open for final view bookkeeping.
+      if (progress.total > 0 && progress.loaded >= progress.total) {
+        loadingProgress.value = null
+      }
+    })
+  } finally {
+    if (requestId === projectLoadRequestId) loadingProgress.value = null
+  }
+}
+
+const cancelProjectLoad = () => {
+  projectLoadRequestId += 1
+  loadingProgress.value = null
+  editor.cancelProjectLoad()
 }
 
 const markSaved = () => {
@@ -367,6 +422,7 @@ defineExpose({
   getProject,
   isGrayscaleEnabled: editor.isGrayscaleEnabled,
   loadProject,
+  cancelProjectLoad,
   markSaved,
   markSaveCanceled,
   markSaving,
@@ -426,13 +482,6 @@ onBeforeUnmount(() => {
   >
     <div v-if="!focusMode" class="viewer-toolbar">
       <div class="viewer-toolbar-spacer"></div>
-
-      <div class="viewer-actions">
-        <div v-if="saveProgress !== null" class="save-progress" aria-label="保存进度">
-          <span :style="{ width: `${saveProgress}%` }"></span>
-        </div>
-        <span v-if="statusText" class="project-status">{{ statusText }}</span>
-      </div>
     </div>
 
     <div
@@ -480,6 +529,34 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </form>
+    </div>
+
+    <div
+      v-if="loadingProgress"
+      class="canvas-loading-backdrop"
+      aria-live="polite"
+      @contextmenu.stop.prevent
+    >
+      <div class="canvas-loading-dialog">
+        <p>正在加载图片</p>
+        <div class="canvas-loading-bar">
+          <span :style="{ width: `${loadingPercent}%` }"></span>
+        </div>
+        <span class="canvas-loading-count"
+          >{{ Math.min(loadingProgress.loaded, loadingProgress.total) }} /
+          {{ loadingProgress.total }}</span
+        >
+      </div>
+    </div>
+
+    <div v-if="saveProgress !== null" class="canvas-save-backdrop" aria-live="polite">
+      <div class="canvas-save-dialog" role="status">
+        <p>正在保存项目</p>
+        <div class="canvas-loading-bar">
+          <span :style="{ width: `${saveProgress}%` }"></span>
+        </div>
+        <span class="canvas-loading-count">{{ statusText || `正在保存 ${saveProgress}%` }}</span>
+      </div>
     </div>
 
     <div

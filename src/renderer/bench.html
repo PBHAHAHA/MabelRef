@@ -1,0 +1,120 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>MabelRef Engine Bench</title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #14161b;
+        color: #d7dae0;
+        font: 13px/1.5 system-ui, sans-serif;
+        overflow: hidden;
+      }
+      #bench-root {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+      #bench-toolbar {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        padding: 10px 14px;
+        background: #1b1e25;
+        border-bottom: 1px solid #2a2e37;
+        user-select: none;
+      }
+      #bench-toolbar select,
+      #bench-toolbar button {
+        background: #262a33;
+        color: #d7dae0;
+        border: 1px solid #363b46;
+        border-radius: 6px;
+        padding: 5px 10px;
+        font: inherit;
+      }
+      #bench-toolbar button {
+        cursor: pointer;
+      }
+      #bench-toolbar button:disabled {
+        opacity: 0.5;
+        cursor: wait;
+      }
+      #bench-stats {
+        margin-left: auto;
+        font-variant-numeric: tabular-nums;
+        white-space: pre;
+        color: #9fe870;
+      }
+      #bench-status {
+        color: #8a919e;
+      }
+      #bench-canvas-wrap {
+        position: relative;
+        flex: 1;
+      }
+      #bench-canvas,
+      #bench-overlay {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      #bench-overlay {
+        pointer-events: none;
+      }
+      #bench-error {
+        position: absolute;
+        inset: 0;
+        display: none;
+        place-content: center;
+        text-align: center;
+        color: #ff7a7a;
+        background: rgba(20, 22, 27, 0.92);
+        padding: 24px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="bench-root">
+      <div id="bench-toolbar">
+        <strong>WebGPU 渲染核压测</strong>
+        <label>
+          图片数
+          <select id="bench-count">
+            <option value="100">100</option>
+            <option value="300">300</option>
+            <option value="500" selected>500</option>
+            <option value="1000">1000</option>
+            <option value="2000">2000</option>
+          </select>
+        </label>
+        <label>
+          纹理长边
+          <select id="bench-edge">
+            <option value="1024">1024</option>
+            <option value="2048" selected>2048</option>
+          </select>
+        </label>
+        <button id="bench-run">生成并运行</button>
+        <span id="bench-status">待命</span>
+        <span id="bench-stats"></span>
+      </div>
+      <div id="bench-canvas-wrap">
+        <canvas id="bench-canvas"></canvas>
+        <canvas id="bench-overlay"></canvas>
+        <div id="bench-error"></div>
+      </div>
+    </div>
+    <script type="module" src="/src/bench/benchMain.js"></script>
+  </body>
+</html>

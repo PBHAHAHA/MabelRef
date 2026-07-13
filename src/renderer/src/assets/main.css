@@ -1218,17 +1218,15 @@ button {
   background: #111419;
 }
 
-.image-canvas > canvas,
-.image-canvas .leafer-canvas-view {
+.image-canvas > canvas {
   display: block;
   width: 100%;
   height: 100%;
-  background: transparent !important;
+  background: transparent;
   transition: filter 160ms ease;
 }
 
-.image-canvas.grayscale > canvas,
-.image-canvas.grayscale .leafer-canvas-view {
+.image-canvas.grayscale > canvas {
   filter: grayscale(1);
 }
 
@@ -1290,6 +1288,82 @@ button {
 .canvas-image-context-menu button:hover {
   background: rgba(143, 179, 158, 0.09);
   color: #f3faf5;
+}
+
+.canvas-loading-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 10, 12, 0.46);
+  padding: 24px;
+  cursor: progress;
+}
+
+.canvas-save-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 105;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 10, 12, 0.46);
+  padding: 24px;
+  cursor: progress;
+}
+
+.canvas-loading-dialog {
+  display: grid;
+  width: min(300px, 100%);
+  border: 1px solid rgba(143, 179, 158, 0.14);
+  border-radius: 8px;
+  background: #171d1c;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.42);
+  padding: 16px;
+  gap: 10px;
+  justify-items: center;
+}
+
+.canvas-save-dialog {
+  display: grid;
+  width: min(300px, 100%);
+  border: 1px solid rgba(143, 179, 158, 0.14);
+  border-radius: 8px;
+  background: #171d1c;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.42);
+  padding: 16px;
+  gap: 10px;
+  justify-items: center;
+}
+
+.canvas-loading-dialog p,
+.canvas-save-dialog p {
+  margin: 0;
+  color: #f3faf5;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.canvas-loading-bar {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(210, 224, 216, 0.12);
+  overflow: hidden;
+}
+
+.canvas-loading-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #6fa77a;
+  transition: width 120ms ease;
+}
+
+.canvas-loading-count {
+  color: rgba(210, 224, 216, 0.55);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .canvas-ai-edit-backdrop {

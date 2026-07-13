@@ -26,7 +26,7 @@ English: MabelRef is in early open source preparation. The app is usable locally
 - Vue 3: 渲染进程 UI
 - electron-vite: main、preload、renderer 三端构建
 - electron-builder: 应用打包
-- Leafer Editor: 画布编辑
+- 自研 WebGPU 引擎: 画布渲染与编辑（Render Worker + 实例化渲染 + GPU mip 链）
 - lucide-vue-next: 图标
 
 ## 快速开始

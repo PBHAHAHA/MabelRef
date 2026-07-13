@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 imagePacking 的装箱算法与 viewportFit 的内容包围盒
+ * [OUTPUT]: 对外提供 getNodeLayoutSize 与 getSelectedImageLayout，按含缩放的节点尺寸在原包围盒锚点处重排选中图片
+ * [POS]: renderer/canvas 的选中排版纯函数，被 engine/useEngineImageEditor 消费
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 import { packImages } from './imagePacking.mjs'
 import { getContentBounds } from './viewportFit.mjs'
 

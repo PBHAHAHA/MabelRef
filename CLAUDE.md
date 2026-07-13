@@ -1,7 +1,7 @@
 # MabelRef - Electron Vue Desktop Shell
 
 Electron + electron-vite + Vue 3 + electron-builder
-Canvas editor: leafer-editor
+Canvas engine: 自研 WebGPU 渲染引擎（Render Worker + 实例化渲染 + GPU mip 链）
 Icons: lucide-vue-next
 
 <directory>

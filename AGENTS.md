@@ -8,7 +8,7 @@ MabelRef is an Electron Vue desktop application for visual reference boards.
 - electron-vite
 - Vue 3
 - electron-builder
-- Leafer Editor
+- Custom WebGPU render engine (Render Worker + instanced rendering + GPU mipmaps)
 - lucide-vue-next
 
 ## Repository Layout

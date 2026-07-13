@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖画布节点几何数据、视口尺寸和内边距配置
  * [OUTPUT]: 对外提供内容包围盒与适配视口的缩放/居中偏移计算
- * [POS]: renderer/canvas 的纯视口算法，供 Leafer 画布自动缩放居中使用
+ * [POS]: renderer/canvas 的纯视口算法，供 engine/useEngineImageEditor 画布自动缩放居中使用
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 export function getContentBounds(nodes) {
